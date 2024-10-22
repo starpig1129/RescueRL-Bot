@@ -98,14 +98,54 @@ class CustomCritic(nn.Module):
         x = self.fc3(x)
         return x
 
+# Custom policy class overriding the ActorCriticPolicy
 class CustomPolicy(ActorCriticPolicy):
-    def __init__(self, *args, **kwargs):
-        super(CustomPolicy, self).__init__(*args, **kwargs, 
+    def __init__(self, observation_space, action_space, lr_schedule, *args, **kwargs):
+        super(CustomPolicy, self).__init__(observation_space, action_space, lr_schedule,
+                                           *args, **kwargs, 
                                            features_extractor_class=CustomResNet,
-                                           net_arch=[256, 128])
+                                           features_extractor_kwargs={'features_dim': 512})
 
-    def _build_mlp_extractor(self) -> None:
-        self.features_dim = self.features_extractor.features_dim
+        # Custom Actor-Critic network
+        self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
+        self.value_net = CustomCritic(self.features_extractor.features_dim)
 
-        self.action_net = CustomActor(self.features_dim, self.action_space.n)
-        self.value_net = CustomCritic(self.features_dim)
+    def _build(self, lr_schedule) -> None:
+        """Override the default `_build` method to skip the MLP extractor."""
+        pass
+
+    def forward(self, obs, deterministic=False):
+        # Extract features using the custom ResNet extractor
+        features = self.extract_features(obs)
+        
+        # Get the action logits from the actor and the value from the critic
+        action_logits = self.action_net(features)
+        value = self.value_net(features)
+        
+        # Create a distribution for the action (Categorical for discrete actions)
+        action_dist = torch.distributions.Categorical(logits=action_logits)
+        
+        if deterministic:
+            actions = torch.argmax(action_logits, dim=1)
+        else:
+            actions = action_dist.sample()
+        
+        # Compute log probabilities
+        log_probs = action_dist.log_prob(actions)
+        
+        return actions, value, log_probs
+
+    def evaluate_actions(self, obs, actions):
+        # Extract features and process through the actor-critic networks
+        features = self.extract_features(obs)
+        
+        action_logits = self.action_net(features)
+        value = self.value_net(features)
+        
+        # Create a distribution for the action (Categorical for discrete actions)
+        action_dist = torch.distributions.Categorical(logits=action_logits)
+        
+        log_prob = action_dist.log_prob(actions)
+        entropy = action_dist.entropy().mean()
+        
+        return log_prob, entropy, value
