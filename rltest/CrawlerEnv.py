@@ -19,7 +19,7 @@ class CrawlerEnv(gym.Env):
 
         self.magnitude = 5.0  # 控制向量的長度（幅度）
         self.angle_degrees = 90  # 控制角度值（以度為單位）
-        self.YoloModel = YOLO('yolo/yolov8n.pt', verbose=False)  # 載入訓練好的 YOLO 模型
+        self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)  # 載入訓練好的 YOLO 模型
         self.reward_function = RewardFunction()  # 建立獎勵函數物件
 
         self.data_handler = DataHandler(base_dir="train_logs")
