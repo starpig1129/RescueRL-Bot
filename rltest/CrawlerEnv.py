@@ -7,6 +7,7 @@ import select
 import struct
 import math
 import time
+import json
 from reward.Reward_3 import RewardFunction
 import threading
 
@@ -169,36 +170,50 @@ class CrawlerEnv(gym.Env):
         except Exception as e:
             print(f"發送控制訊號時發生錯誤: {e}")
 
-    def receive_data(self):
-        self.info_conn.setblocking(False)  # 設置為非阻塞模式
-        
-        try:
-            while True:
-                try:
-                    ready = select.select([self.info_conn], [], [], 0.04)  # 使用select監控套接字，超時時間設置為1秒
-                    
-                    if ready[0]:
-                        length_bytes = self.info_conn.recv(4)  # 讀取長度字節數組
-                        data_length = int.from_bytes(length_bytes, byteorder='big')  # 將長度字節數組轉換為整數
-                        
-                        data_bytes = bytearray()
-                        while len(data_bytes) < data_length:
-                            remaining_bytes = data_length - len(data_bytes)
-                            chunk = self.info_conn.recv(remaining_bytes)  # 讀取剩餘的數據
-                            data_bytes.extend(chunk)
-                        
-                        data_string = data_bytes.decode('utf-8')
-                        values = list(map(float, data_string.split(',')))
-                        return values
-                    else:
-                        print("No data available within timeout period.")
-                except BlockingIOError:
-                    print("No data available, continue...")
-                    continue
-                except Exception as e:
-                    print(f"接收數據時發生錯誤: {e}")
-        except Exception as e:
-            print(f"接收數據時發生錯誤: {e}")
+def receive_data():
+    # Set up the TCP/IP socket
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('localhost', 8000))
+    server_socket.listen(1)
+
+    print('等待連接...')
+    connection, client_address = server_socket.accept()
+
+    try:
+        print(f'連接來自: {client_address}')
+
+        while True:
+            # Read data size (first 4 bytes)
+            length_bytes = connection.recv(4)
+            if not length_bytes:
+                break
+
+            # Determine the length of the incoming message
+            length = int.from_bytes(length_bytes, byteorder='little')
+
+            # Receive the actual data based on the length
+            data = connection.recv(length).decode('utf-8')
+            if not data:
+                break
+
+            # Deserialize the JSON data
+            json_data = json.loads(data)
+            print(f'接收到的數據: {json_data}')
+
+            # Access the crawler's position and rotation
+            crawler_position = json_data['position']
+            crawler_rotation = json_data['rotation']
+            targets = json_data['targets']
+
+            print(f'Crawler位置: {crawler_position}, 旋轉: {crawler_rotation}')
+
+            for target in targets:
+                target_position = target['position']
+                screen_position = target['screenPosition']
+                print(f'目標位置: {target_position}, 螢幕位置: {screen_position}')
+
+    finally:
+        connection.close()
 
     def render(self, mode='human'):
         pass
