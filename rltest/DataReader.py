@@ -38,17 +38,15 @@ class DataReader:
                 'yolo_boxes': np.array(step_group['yolo_boxes']),
                 'yolo_scores': np.array(step_group['yolo_scores']),
                 'yolo_classes': np.array(step_group['yolo_classes']),
-                'yolo_masks': np.array(step_group['yolo_masks']) if 'yolo_masks' in step_group else None,
-                'yolo_keypoints': np.array(step_group['yolo_keypoints']) if 'yolo_keypoints' in step_group else None
             }
             
             print(f"成功讀取世代 {epoch} 步數 {step} 的資料")
             return data
 
 # 使用範例
-data_reader = DataReader(base_dir="env_data")
+data_reader = DataReader(base_dir="train_logs")
 epoch = 1
-step = 50
+step = 100
 data = data_reader.load_step_data(epoch, step)
 
 if data:
@@ -58,3 +56,5 @@ if data:
     print("YOLO 偵測框:", data['yolo_boxes'])
     print("YOLO 置信度:", data['yolo_scores'])
     print("YOLO 類別:", data['yolo_classes'])
+else:
+    print("無資料")
