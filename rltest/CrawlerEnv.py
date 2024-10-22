@@ -170,66 +170,59 @@ class CrawlerEnv(gym.Env):
         except Exception as e:
             print(f"發送控制訊號時發生錯誤: {e}")
 
-def receive_data():
-    # Set up the TCP/IP socket
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('localhost', 8000))
-    server_socket.listen(1)
-
-    print('等待連接...')
-    connection, client_address = server_socket.accept()
-
-    try:
-        print(f'連接來自: {client_address}')
-
-        while True:
-            # Read data size (first 4 bytes)
-            length_bytes = connection.recv(4)
+    def receive_data(self):
+        try:
+            # Read the length of the incoming message (first 4 bytes)
+            length_bytes = self.info_conn.recv(4)
             if not length_bytes:
-                break
+                return None
 
             # Determine the length of the incoming message
             length = int.from_bytes(length_bytes, byteorder='little')
 
             # Receive the actual data based on the length
-            data = connection.recv(length).decode('utf-8')
+            data = self.info_conn.recv(length).decode('utf-8')
             if not data:
-                break
+                return None
 
             # Deserialize the JSON data
             json_data = json.loads(data)
-            print(f'接收到的數據: {json_data}')
+            #print(f'接收到的數據: {json_data}')
 
             # Access the crawler's position and rotation
             crawler_position = json_data['position']
             crawler_rotation = json_data['rotation']
             targets = json_data['targets']
 
-            print(f'Crawler位置: {crawler_position}, 旋轉: {crawler_rotation}')
+            #print(f'Crawler位置: {crawler_position}, 旋轉: {crawler_rotation}')
 
             for target in targets:
                 target_position = target['position']
                 screen_position = target['screenPosition']
-                print(f'目標位置: {target_position}, 螢幕位置: {screen_position}')
+                #print(f'目標位置: {target_position}, 螢幕位置: {screen_position}')
 
-    finally:
-        connection.close()
+            return json_data  # Return the parsed JSON data
 
-    def render(self, mode='human'):
-        pass
+        except Exception as e:
+            print(f"接收數據時發生錯誤: {e}")
+            return None
 
-    def close(self):
-        # 關閉所有的重置訊號連接對象
-        for reset_conn in self.reset_connections:
-            reset_conn.close()
-        self.reset_connections.clear()
 
-        # 關閉重製訊號接收伺服器
-        self.reset_socket.close()
-        # 清理資源,關閉連線
-        self.control_conn.close()
-        self.control_socket.close()
-        self.obs_conn.close()
-        self.obs_socket.close()
-        self.info_conn.close()
-        self.info_socket.close()
+        def render(self, mode='human'):
+            pass
+
+        def close(self):
+            # 關閉所有的重置訊號連接對象
+            for reset_conn in self.reset_connections:
+                reset_conn.close()
+            self.reset_connections.clear()
+
+            # 關閉重製訊號接收伺服器
+            self.reset_socket.close()
+            # 清理資源,關閉連線
+            self.control_conn.close()
+            self.control_socket.close()
+            self.obs_conn.close()
+            self.obs_socket.close()
+            self.info_conn.close()
+            self.info_socket.close()

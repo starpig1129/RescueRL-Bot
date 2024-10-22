@@ -1608,7 +1608,7 @@ PrefabInstance:
         type: 3}
       propertyPath: TargetPrefab
       value: 
-      objectReference: {fileID: 4520716785156583572}
+      objectReference: {fileID: 3444790619381112267}
     - target: {fileID: 6853843539417779403, guid: 573729d9764c9a0409ca5d9f5857f40e,
         type: 3}
       propertyPath: objectManager
@@ -1828,6 +1828,12 @@ GameObject:
     type: 3}
   m_PrefabInstance: {fileID: 3444790619381112265}
   m_PrefabAsset: {fileID: 0}
+--- !u!4 &3444790619381112267 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 5009798587854357618, guid: 573729d9764c9a0409ca5d9f5857f40e,
+    type: 3}
+  m_PrefabInstance: {fileID: 3444790619381112265}
+  m_PrefabAsset: {fileID: 0}
 --- !u!114 &3444790619381112268
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1891,12 +1897,6 @@ MonoBehaviour:
   targetPositions: []
   objectManager: {fileID: 179189692}
   crawlerAgent: {fileID: 2035493171}
---- !u!4 &4520716785156583572 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 1844662141930723566, guid: 8fed7bffac2af8c4fbcb42f40af31243,
-    type: 3}
-  m_PrefabInstance: {fileID: 7132670236328373577}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &7132670236328373577
 PrefabInstance:
   m_ObjectHideFlags: 0
