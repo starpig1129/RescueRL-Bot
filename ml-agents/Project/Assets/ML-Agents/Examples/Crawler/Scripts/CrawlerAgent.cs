@@ -121,7 +121,7 @@ public class CrawlerAgent : Agent
     public ObjectManager objectManager; // 添加對 ObjectManager 的引用
     public TargetController targetController;
     /// <summary>
-    /// 
+    ///
     /// 循環遍歷身體部位並將它們重置到初始條件。
     /// </summary>
     public override void OnEpisodeBegin()
