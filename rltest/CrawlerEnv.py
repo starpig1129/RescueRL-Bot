@@ -3,14 +3,12 @@ import numpy as np
 import cv2
 from ultralytics import YOLO
 import socket
-import select
 import struct
 import math
-import time
 import json
-from reward.Reward_3 import RewardFunction
 import threading
-
+from reward.Reward_3 import RewardFunction
+from DataHandler import DataHandler
 class CrawlerEnv(gym.Env):
     def __init__(self, show):
         super(CrawlerEnv, self).__init__()
@@ -72,6 +70,10 @@ class CrawlerEnv(gym.Env):
         self.YoloModel = YOLO('yolo/yolov8n.pt', verbose=False)  # 載入訓練好的 YOLO 模型
         self.reward_function = RewardFunction()  # 建立獎勵函數物件
 
+        self.data_handler = DataHandler(base_dir="train_logs")
+        self.episode_counter = 0
+        self.step_counter = 0
+        
     def step(self, action):
         # 將動作轉換為角度
         self.angle_degrees = action*40
@@ -80,20 +82,31 @@ class CrawlerEnv(gym.Env):
         self.send_control_signal()
 
         # 接收影像並進行YOLO處理
-        results, obs = self.receive_image()
+        results, obs, origin_image = self.receive_image()
         reward_data = self.receive_data()
         if reward_data == 0:
             reward = 0
         else:
-            reward = self.reward_function.get_reward(results=results, reward_data=reward_data)  # 計算獎勵值
+            reward,reward_list = self.reward_function.get_reward(results=results, reward_data=reward_data)  # 計算獎勵值
         done = self.reset_event.is_set()  # 檢查是否接收到重置訊號
+        
+        # 儲存每一代的每一步數據
+        self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
+
+        self.step_counter += 1
+        
         print('reward',reward, done)
         return obs, reward, done, {}
 
     def reset(self):
+        # 每次 reset 時創建新的 HDF5 檔案來儲存該世代數據
+        self.episode_counter += 1
+        self.step_counter = 0
+        self.data_handler.create_epoch_file(self.episode_counter)
+        
         self.reset_event.wait()  # 等待重置訊號
         self.reset_event.clear()  # 清除重置訊號
-        results, obs = self.receive_image()
+        results, obs, origin_image = self.receive_image()
         print("環境重置完成")
         return obs
 
@@ -128,10 +141,10 @@ class CrawlerEnv(gym.Env):
                 return None
 
             nparr = np.frombuffer(image_data, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            origin_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-            if image is not None:
-                results = self.YoloModel(image, imgsz=(640, 384), device='cpu',
+            if origin_image is not None:
+                results = self.YoloModel(origin_image, imgsz=(640, 384), device='cpu',
                             conf=0.7,
                             classes=[0],  # 只偵測人的類別編號
                             show_boxes=False,  # 不顯示偵測框
@@ -142,12 +155,12 @@ class CrawlerEnv(gym.Env):
                     x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
                     obs = cv2.rectangle(results.orig_img, (x1, y1), (x2, y2), (0, 255, 0), -1)
                 except:
-                    obs = image
+                    obs = origin_image
                 # 顯示接收到的影像
                 if obs is not None and self.show:
                     cv2.imshow("觀察空間", obs)
                     cv2.waitKey(1)
-                return results, obs
+                return results, obs ,origin_image
 
         except Exception as e:
             print(f"接收影像資料時發生錯誤: {e}")
@@ -226,3 +239,5 @@ class CrawlerEnv(gym.Env):
         self.obs_socket.close()
         self.info_conn.close()
         self.info_socket.close()
+        
+        self.data_handler.close_epoch_file()

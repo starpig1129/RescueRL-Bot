@@ -187,4 +187,4 @@ class RewardFunction:
                 touch_reward        * 100 +    # Touch reward
                 con_reward          * 1 )      # Continuous touch reward
 
-        return reward
+        return reward,[person_detec_reward,dis_reward,dis_punish,inview_reward,viewdis_reward,viewdis_punish,everview_punish,move_reward,move_punish,upsidedown_punish,touch_reward,con_reward]

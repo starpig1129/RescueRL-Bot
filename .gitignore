@@ -1,3 +1,6 @@
 back
 logs
 __pycache__/
+rltest/models
+rltest/train_logs
+rltest/logs
