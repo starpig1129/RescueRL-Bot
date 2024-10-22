@@ -208,21 +208,21 @@ class CrawlerEnv(gym.Env):
             return None
 
 
-        def render(self, mode='human'):
-            pass
+    def render(self, mode='human'):
+        pass
 
-        def close(self):
-            # 關閉所有的重置訊號連接對象
-            for reset_conn in self.reset_connections:
-                reset_conn.close()
-            self.reset_connections.clear()
+    def close(self):
+        # 關閉所有的重置訊號連接對象
+        for reset_conn in self.reset_connections:
+            reset_conn.close()
+        self.reset_connections.clear()
 
-            # 關閉重製訊號接收伺服器
-            self.reset_socket.close()
-            # 清理資源,關閉連線
-            self.control_conn.close()
-            self.control_socket.close()
-            self.obs_conn.close()
-            self.obs_socket.close()
-            self.info_conn.close()
-            self.info_socket.close()
+        # 關閉重製訊號接收伺服器
+        self.reset_socket.close()
+        # 清理資源,關閉連線
+        self.control_conn.close()
+        self.control_socket.close()
+        self.obs_conn.close()
+        self.obs_socket.close()
+        self.info_conn.close()
+        self.info_socket.close()
