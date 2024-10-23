@@ -20,6 +20,9 @@ class DataHandler:
         創建一個 HDF5 檔案來儲存整個世代的資料，無預設步數大小
         :param epoch: 世代號碼
         """
+        # 關閉當前的檔案和執行緒
+        self.close_epoch_file()
+
         file_path = os.path.join(self.base_dir, f"epoch_{epoch:03d}.h5")
         self.hdf5_file = h5py.File(file_path, 'w')
 
@@ -135,3 +138,7 @@ class DataHandler:
         if self.hdf5_file is not None:
             self.hdf5_file.close()
             print("HDF5 檔案已關閉")
+
+        # 重置停止事件和寫入執行緒狀態
+        self.stop_event.clear()
+        self.writer_thread = None

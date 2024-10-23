@@ -64,13 +64,14 @@ class DataReader:
             return data
 # 使用範例
 data_reader = DataReader(base_dir="train_logs")
-epoch = 1
+epoch = 2
 
 # 取得指定世代的最大步數
 max_steps = data_reader.get_max_steps(epoch)
 if max_steps is not None:
     print(f"世代 {epoch} 的最大步數為: {max_steps}")
-
+else:
+    print("異常")
 data_range = data_reader.load_range_data(epoch, slice(5, 1000, 100))
 
 if data_range:

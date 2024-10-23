@@ -17,13 +17,13 @@ class CrawlerEnv(gym.Env):
     def __init__(self, show):
         super(CrawlerEnv, self).__init__()
         self.show = show
-        self.action_space = gym.spaces.Discrete(9)  # 定義動作空間，動作為 0 到 8 的整數
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(384, 640, 3), dtype=np.uint8)  # 觀察空間
+        self.action_space = gym.spaces.Discrete(9)
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(384, 640, 3), dtype=np.uint8)
 
-        self.magnitude = 5.0  # 控制向量的長度（幅度）
-        self.angle_degrees = 90  # 控制角度值（以度為單位）
-        self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)  # 載入訓練好的 YOLO 模型
-        self.reward_function = RewardFunction()  # 建立獎勵函數物件
+        self.magnitude = 5.0
+        self.angle_degrees = 90
+        self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)
+        self.reward_function = RewardFunction()
 
         self.data_handler = DataHandler(base_dir="train_logs")
         self.episode_counter = 0
@@ -80,7 +80,7 @@ class CrawlerEnv(gym.Env):
 
         # 在一個新的執行緒中啟動重置訊號接收伺服器
         reset_thread = threading.Thread(target=self.accept_reset_connections)
-        reset_thread.daemon = True  # 設置為 daemon 執行緒
+        reset_thread.daemon = True
         reset_thread.start()
 
     def accept_reset_connections(self):
@@ -96,17 +96,17 @@ class CrawlerEnv(gym.Env):
                     signal = int.from_bytes(data, byteorder='little')
                     print(f"接收到的重置訊號值: {signal}")
                     if signal == 1:
-                        self.reset_event.set()  # 設置重置訊號
+                        self.reset_event.set()
             except Exception as e:
                 print(f"接收重置訊號時發生錯誤: {e}")
-                break  # 出現異常時退出循環
+                break
 
     def step(self, action):
         self.angle_degrees = action * 40
 
         # 發送控制訊號
         self.send_control_signal()
-        
+
         # 接收影像並進行 YOLO 處理
         results, obs, origin_image = self.receive_image()
         if obs is None:
@@ -124,7 +124,7 @@ class CrawlerEnv(gym.Env):
 
         # 計算獎勵
         reward, reward_list = self.reward_function.get_reward(results=results, reward_data=reward_data)
-        done = self.reset_event.is_set()  # 檢查是否接收到重置訊號
+        done = self.reset_event.is_set()
 
         # 儲存每一代的每一步數據
         self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
@@ -132,9 +132,8 @@ class CrawlerEnv(gym.Env):
 
         return obs, reward, done, {}
 
-
     def reset(self):
-        if self.episode_counter > 0:  # 確保上一個世代的檔案正確關閉
+        if self.episode_counter > 0:
             self.data_handler.close_epoch_file()
 
         self.episode_counter += 1
@@ -169,19 +168,25 @@ class CrawlerEnv(gym.Env):
             self.control_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             print("重新連接到控制伺服器:", self.control_addr)
 
+    def recv_all(self, sock, n):
+        data = b''
+        while len(data) < n:
+            packet = sock.recv(n - len(data))
+            if not packet:
+                return None
+            data += packet
+        return data
+
     def receive_image(self):
         try:
-            image_len_bytes = self.obs_conn.recv(4)
+            image_len_bytes = self.recv_all(self.obs_conn, 4)
             if not image_len_bytes:
                 return None, None, None
             image_len = int.from_bytes(image_len_bytes, byteorder='little')
 
-            image_data = b''
-            while len(image_data) < image_len:
-                packet = self.obs_conn.recv(min(image_len - len(image_data), 4096))
-                if not packet:
-                    return None, None, None
-                image_data += packet
+            image_data = self.recv_all(self.obs_conn, image_len)
+            if not image_data:
+                return None, None, None
 
             nparr = np.frombuffer(image_data, np.uint8)
             origin_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -195,7 +200,7 @@ class CrawlerEnv(gym.Env):
                     x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
                     obs = cv2.rectangle(results.orig_img, (x1, y1), (x2, y2), (0, 255, 0), -1)
                 except:
-                    obs = origin_image
+                    obs = origin_image.copy()
 
                 if obs is not None and self.show:
                     cv2.imshow("觀察空間", obs)
@@ -215,29 +220,34 @@ class CrawlerEnv(gym.Env):
 
     def receive_data(self):
         try:
-            length_bytes = self.info_conn.recv(4)
+            # 接收 4 個位元組的資料長度，使用大端序
+            length_bytes = self.recv_all(self.info_conn, 4)
             if not length_bytes:
                 return None
 
-            length = int.from_bytes(length_bytes, byteorder='little')
-            data = b''
-            while len(data) < length:
-                packet = self.info_conn.recv(length - len(data))
-                if not packet:
-                    return None
-                data += packet
+            # 將位元組轉換為整數（大端序）
+            length = int.from_bytes(length_bytes, byteorder='big', signed=True)
+            print(f"接收到的資料長度：{length} 位元組")
+            if length <= 0:
+                print(f"接收到的長度無效: {length}")
+                return None
 
-            data = data.decode('utf-8')
-            json_data = json.loads(data)
+            # 接收實際的資料
+            data_bytes = self.recv_all(self.info_conn, length)
+            if not data_bytes:
+                print("未接收到完整的資料")
+                return None
+
+            print(f"實際接收到的資料長度：{len(data_bytes)} 位元組")
+            data_str = data_bytes.decode('utf-8')
+            json_data = json.loads(data_str)
             return json_data
 
         except Exception as e:
             print(f"接收數據時發生錯誤: {e}")
             self.info_conn.close()
-            self.info_conn, self.info_addr = self.info_socket.accept()
-            self.info_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            print("重新連接到數據伺服器:", self.info_addr)
             return None
+
 
     def render(self, mode='human'):
         pass
@@ -267,8 +277,8 @@ class CrawlerEnv(gym.Env):
 
 def signal_handler(sig, frame):
     print('收到中斷信號 (Ctrl+C)，正在關閉...')
-    env.close()  # 確保調用環境的關閉函數
-    sys.exit(0)  # 正常退出程式
+    env.close()
+    sys.exit(0)
 
 
 # 設置信號處理器來處理 Ctrl+C 中斷
