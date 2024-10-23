@@ -109,10 +109,18 @@ class CustomPolicy(ActorCriticPolicy):
         # Custom Actor-Critic network
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
-
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
+        
     def _build(self, lr_schedule) -> None:
-        """Override the default `_build` method to skip the MLP extractor."""
-        pass
+        # Construct action and value networks using custom architectures
+        self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
+        self.value_net = CustomCritic(self.features_extractor.features_dim)
+
+    def predict_values(self, obs):
+        # 提取特徵
+        features = self.extract_features(obs)
+        # 使用自訂的 value_net 來預測價值函數
+        return self.value_net(features)
 
     def forward(self, obs, deterministic=False):
         # Extract features using the custom ResNet extractor
