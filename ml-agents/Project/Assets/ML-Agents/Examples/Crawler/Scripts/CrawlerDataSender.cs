@@ -30,7 +30,7 @@ public class CrawlerDataSender : MonoBehaviour
         }
     }
 
-    private float sendInterval = 0.01f;
+    private float sendInterval = 0.5f;
     private float timer = 0f;
 
     private void Update()
@@ -38,10 +38,13 @@ public class CrawlerDataSender : MonoBehaviour
         timer += Time.deltaTime;
         if (timer >= sendInterval)
         {
+            Debug.Log("進入 Update 方法，開始處理資料封包...");
+
             Vector3 crawlerPosition = transform.position;
             Vector3 crawlerRotation = transform.up;
 
             GameObject[] targetObjects = GameObject.FindGameObjectsWithTag(targetTag);
+            Debug.Log($"發現 {targetObjects.Length} 個標記為 {targetTag} 的目標物體。");
 
             // 建立一個物件來儲存要序列化的資料
             var data = new
@@ -60,6 +63,8 @@ public class CrawlerDataSender : MonoBehaviour
                                 screenPosition.x >= 0 && screenPosition.x <= Screen.width &&
                                 screenPosition.y >= 0 && screenPosition.y <= Screen.height;
 
+                Debug.Log($"目標物位置: {targetPosition}, 是否在螢幕內: {isInScreen}");
+
                 // 加入目標物體資料
                 data.targets.Add(new
                 {
@@ -69,7 +74,16 @@ public class CrawlerDataSender : MonoBehaviour
             }
 
             // 將資料序列化為 JSON 字串
-            string jsonData = JsonConvert.SerializeObject(data);
+            string jsonData = "";
+            try
+            {
+                jsonData = JsonConvert.SerializeObject(data);
+                Debug.Log("序列化成功。");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"序列化失敗: {e}");
+            }
 
             // 將 JSON 字串編碼為 UTF-8 位元組
             byte[] dataBytes = Encoding.UTF8.GetBytes(jsonData);
@@ -89,10 +103,29 @@ public class CrawlerDataSender : MonoBehaviour
             Debug.Log($"CombinedData 長度（總發送長度）: {combinedData.Length}");
             Debug.Log($"發送的資料長度（length）: {length}");
 
-            // 發送資料
-            stream.Write(combinedData, 0, combinedData.Length);
+            try
+            {
+                // 發送資料
+                SendDataAsync(combinedData);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"發送資料失敗: {e}");
+            }
 
             timer = 0f;
+        }
+    }
+    async void SendDataAsync(byte[] combinedData)
+    {
+        try
+        {
+            await stream.WriteAsync(combinedData, 0, combinedData.Length);
+            Debug.Log("資料非同步發送成功。");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"非同步發送資料失敗: {e}");
         }
     }
 
@@ -103,5 +136,6 @@ public class CrawlerDataSender : MonoBehaviour
             stream.Close();
         if (client != null)
             client.Close();
+        Debug.Log("連接已關閉。");
     }
 }
