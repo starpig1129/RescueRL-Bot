@@ -1,17 +1,16 @@
+import os
 import h5py
 import numpy as np
-import os
 
 class DataReader:
     def __init__(self, base_dir="data"):
         self.base_dir = base_dir
 
-    def load_step_data(self, epoch, step):
+    def get_max_steps(self, epoch):
         """
-        讀取指定世代和步數的資料
+        讀取指定世代的最大步數
         :param epoch: 世代號碼
-        :param step: 步數號碼
-        :return: 讀取到的資料 (dict 格式)
+        :return: 最大步數 (int)
         """
         file_path = os.path.join(self.base_dir, f"epoch_{epoch:03d}.h5")
         
@@ -20,41 +19,64 @@ class DataReader:
             return None
         
         with h5py.File(file_path, 'r') as hdf5_file:
-            # 檢查該步數資料是否存在
-            step_group_name = f"step_{step:03d}"
-            if step_group_name not in hdf5_file:
-                print(f"步數 {step} 的資料在 {file_path} 中不存在")
+            if 'obs' not in hdf5_file:
+                print(f"資料集 'obs' 在 {file_path} 中不存在")
                 return None
             
-            step_group = hdf5_file[step_group_name]
+            # 獲取 obs 資料集的 shape 的第一個維度作為最大步數
+            max_steps = hdf5_file['obs'].shape[0]
+            return max_steps
+
+    def load_range_data(self, epoch, slice_obj):
+        """
+        使用 NumPy 樣式的切片方式讀取指定世代和步數範圍的資料
+        :param epoch: 世代號碼
+        :param slice_obj: NumPy 樣式的切片物件 (可以是切片或是步數範圍)
+        :return: 讀取到的資料 (dict 格式，對應每個 dataset)
+        """
+        file_path = os.path.join(self.base_dir, f"epoch_{epoch:03d}.h5")
+        
+        if not os.path.exists(file_path):
+            print(f"檔案 {file_path} 不存在")
+            return None
+        
+        with h5py.File(file_path, 'r') as hdf5_file:
+            # 確保資料集存在
+            required_datasets = ['obs', 'angle_degrees', 'reward', 'reward_list', 'origin_image', 'yolo_boxes', 'yolo_scores', 'yolo_classes']
+            for dataset in required_datasets:
+                if dataset not in hdf5_file:
+                    print(f"資料集 {dataset} 在 {file_path} 中不存在")
+                    return None
             
-            # 讀取資料
+            # 使用切片 (slice) 來讀取範圍內的資料
             data = {
-                'obs': np.array(step_group['obs']),
-                'angle_degrees': step_group['angle_degrees'][()],
-                'reward': step_group['reward'][()],
-                'reward_list': np.array(step_group['reward_list']),
-                'origin_image': np.array(step_group['origin_image']),
-                'yolo_boxes': np.array(step_group['yolo_boxes']),
-                'yolo_scores': np.array(step_group['yolo_scores']),
-                'yolo_classes': np.array(step_group['yolo_classes']),
+                'obs': hdf5_file['obs'][slice_obj],
+                'angle_degrees': hdf5_file['angle_degrees'][slice_obj],
+                'reward': hdf5_file['reward'][slice_obj],
+                'reward_list': hdf5_file['reward_list'][slice_obj],
+                'origin_image': hdf5_file['origin_image'][slice_obj],
+                'yolo_boxes': hdf5_file['yolo_boxes'][slice_obj],
+                'yolo_scores': hdf5_file['yolo_scores'][slice_obj],
+                'yolo_classes': hdf5_file['yolo_classes'][slice_obj],
             }
             
-            print(f"成功讀取世代 {epoch} 步數 {step} 的資料")
+            print(f"成功使用切片讀取世代 {epoch} 的資料")
             return data
-
 # 使用範例
 data_reader = DataReader(base_dir="train_logs")
 epoch = 1
-step = 100
-data = data_reader.load_step_data(epoch, step)
 
-if data:
-    print("觀察空間 shape:", data['obs'].shape)
-    print("動作角度:", data['angle_degrees'])
-    print("獎勵:", data['reward'])
-    print("YOLO 偵測框:", data['yolo_boxes'])
-    print("YOLO 置信度:", data['yolo_scores'])
-    print("YOLO 類別:", data['yolo_classes'])
+# 取得指定世代的最大步數
+max_steps = data_reader.get_max_steps(epoch)
+if max_steps is not None:
+    print(f"世代 {epoch} 的最大步數為: {max_steps}")
+
+data_range = data_reader.load_range_data(epoch, slice(5, 1000, 100))
+
+if data_range:
+    print("成功讀取範圍資料:")
+    print("觀察空間 shape:", data_range['obs'].shape)
+    print("動作角度:", data_range['angle_degrees'])
+    print("獎勵:", data_range['reward'])
 else:
-    print("無資料")
+    print("無範圍資料")

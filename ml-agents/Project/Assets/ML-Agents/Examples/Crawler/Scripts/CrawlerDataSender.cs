@@ -58,8 +58,8 @@ public class CrawlerDataSender : MonoBehaviour
                 Vector3 screenPosition = crawlerCamera.WorldToScreenPoint(targetPosition);
 
                 bool isInScreen = screenPosition.z > 0 &&
-                                  screenPosition.x >= 0 && screenPosition.x <= Screen.width &&
-                                  screenPosition.y >= 0 && screenPosition.y <= Screen.height;
+                                screenPosition.x >= 0 && screenPosition.x <= Screen.width &&
+                                screenPosition.y >= 0 && screenPosition.y <= Screen.height;
 
                 // Add target data
                 data.targets.Add(new
