@@ -14,17 +14,40 @@ class DataHandler:
         self.write_queue = queue.Queue()  # 建立一個 Queue 用於異步寫入
         self.stop_event = threading.Event()  # 用於通知異步寫入執行緒結束
         self.writer_thread = None  # 異步寫入的執行緒
+        self.latest_epoch = self._get_latest_epoch()  # 同步最新的訓練世代
 
-    def create_epoch_file(self, epoch):
+    def _get_latest_epoch(self):
+        """
+        檢查 base_dir 目錄中是否有現有的 HDF5 檔案，並找出最新的 epoch 數字
+        """
+        h5_files = [f for f in os.listdir(self.base_dir) if f.endswith(".h5")]
+        if not h5_files:
+            return 0  # 如果沒有檔案，則從第 0 代開始
+
+        # 解析所有檔案名稱並找出最大的 epoch 數字
+        epochs = [int(f.split('_')[1].split('.')[0]) for f in h5_files if 'epoch' in f]
+        return max(epochs)
+
+    def create_epoch_file(self, epoch=None):
         """
         創建一個 HDF5 檔案來儲存整個世代的資料，無預設步數大小
-        :param epoch: 世代號碼
+        :param epoch: 世代號碼，若為 None 則使用當前最新世代加 1
         """
+        # 如果 epoch 未指定，則自動使用最新的 epoch + 1
+        if epoch is None:
+            epoch = self.latest_epoch + 1
+
+        # 同步更新當前最新 epoch
+        self.latest_epoch = epoch
+
+        # 檢查並覆蓋舊的紀錄檔
+        file_path = os.path.join(self.base_dir, f"epoch_{epoch:03d}.h5")
+
         # 關閉當前的檔案和執行緒
         self.close_epoch_file()
+
         # 重置步數
         self.current_max_steps = 0
-        file_path = os.path.join(self.base_dir, f"epoch_{epoch:03d}.h5")
         self.hdf5_file = h5py.File(file_path, 'w')
 
         # 使用 chunking 並啟用可擴展的資料集
@@ -144,4 +167,3 @@ class DataHandler:
         # 重置停止事件和寫入執行緒狀態
         self.stop_event.clear()
         self.writer_thread = None
-
