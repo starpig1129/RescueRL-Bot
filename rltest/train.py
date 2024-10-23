@@ -50,7 +50,7 @@ def main():
     model = PPO(**model_params)
 
     total_timesteps = 1_000_000
-    checkpoint_interval = 50_000
+    checkpoint_interval = 2048
     
     # 訓練模型並保存檢查點
     for i in range(int(total_timesteps / checkpoint_interval)):
