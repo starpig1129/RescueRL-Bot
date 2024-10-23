@@ -22,7 +22,8 @@ class DataHandler:
         """
         # 關閉當前的檔案和執行緒
         self.close_epoch_file()
-
+        # 重置步數
+        self.current_max_steps = 0
         file_path = os.path.join(self.base_dir, f"epoch_{epoch:03d}.h5")
         self.hdf5_file = h5py.File(file_path, 'w')
 
@@ -43,11 +44,11 @@ class DataHandler:
         self.origin_image_dataset = self.hdf5_file.create_dataset(
             'origin_image', (0, 384, 640, 3), maxshape=(None, 384, 640, 3), dtype=np.uint8, chunks=chunk_size)
         self.yolo_boxes_dataset = self.hdf5_file.create_dataset(
-            'yolo_boxes', (0, 100, 4), maxshape=(None, 100, 4), dtype=np.float32, chunks=True)
+            'yolo_boxes', (0, 10, 4), maxshape=(None, 100, 4), dtype=np.float32, chunks=True)
         self.yolo_scores_dataset = self.hdf5_file.create_dataset(
-            'yolo_scores', (0, 100), maxshape=(None, 100), dtype=np.float32, chunks=True)
+            'yolo_scores', (0, 10), maxshape=(None, 100), dtype=np.float32, chunks=True)
         self.yolo_classes_dataset = self.hdf5_file.create_dataset(
-            'yolo_classes', (0, 100), maxshape=(None, 100), dtype=np.int32, chunks=True)
+            'yolo_classes', (0, 10), maxshape=(None, 100), dtype=np.int32, chunks=True)
         
         print(f"資料檔案已創建並啟用可擴展: {file_path}")
 
@@ -119,20 +120,21 @@ class DataHandler:
             self.yolo_scores_dataset[step, :len(yolo_scores)] = yolo_scores
             self.yolo_classes_dataset[step, :len(yolo_classes)] = yolo_classes
         else:
-            self.yolo_boxes_dataset[step] = np.zeros((100, 4))
-            self.yolo_scores_dataset[step] = np.zeros(100)
-            self.yolo_classes_dataset[step] = np.zeros(100, dtype=np.int32)
+            self.yolo_boxes_dataset[step] = np.zeros((10, 4))
+            self.yolo_scores_dataset[step] = np.zeros(10)
+            self.yolo_classes_dataset[step] = np.zeros(10, dtype=np.int32)
 
         print(f"步數 {step} 的資料已儲存到 HDF5 檔案")
 
     def close_epoch_file(self):
-        """
-        關閉 HDF5 檔案，並確保異步寫入的資料完整
-        """
         # 發送停止訊號並等待寫入執行緒結束
         self.stop_event.set()
         if self.writer_thread is not None:
             self.writer_thread.join()
+
+        # 清空寫入隊列，避免未寫入完畢的數據影響下一個世代
+        with self.write_queue.mutex:
+            self.write_queue.queue.clear()
 
         # 確保寫入資料完成後關閉 HDF5 檔案
         if self.hdf5_file is not None:
@@ -142,3 +144,4 @@ class DataHandler:
         # 重置停止事件和寫入執行緒狀態
         self.stop_event.clear()
         self.writer_thread = None
+
