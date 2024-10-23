@@ -170,13 +170,14 @@ class CrawlerEnv(gym.Env):
             self.control_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             print("重新連接到控制伺服器:", self.control_addr)
 
-    def recv_all(self, sock, n):
-        data = b''
-        while len(data) < n:
-            packet = sock.recv(n - len(data))
+    def recv_all(self, conn, length):
+        """ 確保接收指定長度的數據 """
+        data = bytearray()
+        while len(data) < length:
+            packet = conn.recv(length - len(data))
             if not packet:
                 return None
-            data += packet
+            data.extend(packet)
         return data
 
     def receive_image(self):
@@ -225,13 +226,16 @@ class CrawlerEnv(gym.Env):
             # 接收 4 個位元組的資料長度，使用大端序
             length_bytes = self.recv_all(self.info_conn, 4)
             if not length_bytes:
+                print("未接收到資料長度位元組")
                 return None
 
             # 將位元組轉換為整數（大端序）
             length = int.from_bytes(length_bytes, byteorder='big', signed=True)
             print(f"接收到的資料長度：{length} 位元組")
-            if length <= 0:
-                print(f"接收到的長度無效: {length}")
+            
+            # 檢查資料長度是否在合理範圍內，避免無效或過大的資料長度
+            if length <= 0 or length > 10**6:  # 假設資料長度限制為 1MB
+                print(f"接收到的長度無效或過大: {length}")
                 return None
 
             # 接收實際的資料
@@ -241,12 +245,22 @@ class CrawlerEnv(gym.Env):
                 return None
 
             print(f"實際接收到的資料長度：{len(data_bytes)} 位元組")
-            data_str = data_bytes.decode('utf-8')
-            json_data = json.loads(data_str)
-            return json_data
+            
+            try:
+                # 解碼並解析 JSON 資料
+                data_str = data_bytes.decode('utf-8')
+                json_data = json.loads(data_str)
+                return json_data
+            except json.JSONDecodeError as e:
+                print(f"JSON 解析失敗: {e}")
+                return None
 
         except socket.timeout:
             print("接收數據超時")
+            return None
+        except ConnectionResetError:
+            print("連接被重置")
+            self.info_conn.close()
             return None
         except Exception as e:
             print(f"接收數據時發生錯誤: {e}")
