@@ -9,6 +9,7 @@ import json
 import threading
 import signal
 import sys
+import time
 from reward.Reward_3 import RewardFunction
 from DataHandler import DataHandler
 
@@ -56,7 +57,6 @@ class CrawlerEnv(gym.Env):
         self.info_conn, self.info_addr = self.info_socket.accept()
         self.info_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         print("已連接到數據伺服器:", self.info_addr)
-        # 設置接收超時時間，例如 5 秒
         self.info_conn.settimeout(5)
 
     def setup_obs_server(self):
@@ -104,35 +104,38 @@ class CrawlerEnv(gym.Env):
                 break
 
     def step(self, action):
-        self.angle_degrees = action * 40
+        try:
+            self.angle_degrees = action * 40
+            self.send_control_signal()
 
-        # 發送控制訊號
-        self.send_control_signal()
+            # 接收影像並進行 YOLO 處理
+            results, obs, origin_image = self.receive_image()
+            if obs is None:
+                print("未能接收到有效的觀察數據，結束當前 episode。")
+                done = True
+                reward = 0
+                return obs, reward, done, {}
 
-        # 接收影像並進行 YOLO 處理
-        results, obs, origin_image = self.receive_image()
-        if obs is None:
-            print("未能接收到有效的觀察數據，結束當前 episode。")
-            done = True
-            reward = 0
+            reward_data = self.receive_data()
+            if reward_data is None:
+                print("未能接收到有效的獎勵數據，結束當前 episode。")
+                done = True
+                reward = 0
+                return obs, reward, done, {}
+
+            # 計算獎勵
+            reward, reward_list = self.reward_function.get_reward(results=results, reward_data=reward_data)
+            done = self.reset_event.is_set()
+
+            # 儲存每一代的每一步數據
+            self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
+            self.step_counter += 1
+
             return obs, reward, done, {}
 
-        reward_data = self.receive_data()
-        if reward_data is None:
-            print("未能接收到有效的獎勵數據，結束當前 episode。")
-            done = True
-            reward = 0
-            return obs, reward, done, {}
-
-        # 計算獎勵
-        reward, reward_list = self.reward_function.get_reward(results=results, reward_data=reward_data)
-        done = self.reset_event.is_set()
-
-        # 儲存每一代的每一步數據
-        self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
-        self.step_counter += 1
-
-        return obs, reward, done, {}
+        except Exception as e:
+            print(f"步驟執行時發生錯誤: {e}")
+            return None, 0, True, {}
 
     def reset(self):
         if self.episode_counter > 0:
@@ -166,9 +169,19 @@ class CrawlerEnv(gym.Env):
         except Exception as e:
             print(f"發送控制訊號時發生錯誤: {e}")
             self.control_conn.close()
-            self.control_conn, self.control_addr = self.control_socket.accept()
-            self.control_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.control_conn, self.control_addr = self.reconnect_socket(self.control_socket, self.control_address, '控制')
             print("重新連接到控制伺服器:", self.control_addr)
+
+    def reconnect_socket(self, socket_obj, address, conn_type):
+        """ 重新連接伺服器 """
+        try:
+            new_conn, new_addr = socket_obj.accept()
+            new_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            print(f"重新連接到 {conn_type} 伺服器:", new_addr)
+            return new_conn, new_addr
+        except Exception as e:
+            print(f"重新連接 {conn_type} 伺服器時發生錯誤: {e}")
+            return None, None
 
     def recv_all(self, conn, length):
         """ 確保接收指定長度的數據 """
@@ -215,10 +228,7 @@ class CrawlerEnv(gym.Env):
 
         except Exception as e:
             print(f"接收影像資料時發生錯誤: {e}")
-            self.obs_conn.close()
-            self.obs_conn, self.obs_addr = self.obs_socket.accept()
-            self.obs_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            print("重新連接到影像接收伺服器:", self.obs_addr)
+            self.obs_conn, self.obs_addr = self.reconnect_socket(self.obs_socket, self.obs_address, '影像接收')
             return None, None, None
 
     def receive_data(self):
@@ -260,38 +270,52 @@ class CrawlerEnv(gym.Env):
             return None
         except ConnectionResetError:
             print("連接被重置")
-            self.info_conn.close()
+            self.info_conn, self.info_addr = self.reconnect_socket(self.info_socket, self.info_address, '數據')
             return None
         except Exception as e:
             print(f"接收數據時發生錯誤: {e}")
-            self.info_conn.close()
+            self.info_conn, self.info_addr = self.reconnect_socket(self.info_socket, self.info_address, '數據')
             return None
-
 
     def render(self, mode='human'):
         pass
 
     def close(self):
         # 關閉所有連接
-        if hasattr(self, 'reset_socket') and self.reset_socket:
-            self.reset_socket.close()
-        if hasattr(self, 'control_conn') and self.control_conn:
-            self.control_conn.close()
-        if hasattr(self, 'control_socket') and self.control_socket:
-            self.control_socket.close()
-        if hasattr(self, 'obs_conn') and self.obs_conn:
-            self.obs_conn.close()
-        if hasattr(self, 'obs_socket') and self.obs_socket:
-            self.obs_socket.close()
-        if hasattr(self, 'info_conn') and self.info_conn:
-            self.info_conn.close()
-        if hasattr(self, 'info_socket') and self.info_socket:
-            self.info_socket.close()
+        sockets = [
+            ('reset_socket', self.reset_socket),
+            ('control_conn', self.control_conn),
+            ('control_socket', self.control_socket),
+            ('obs_conn', self.obs_conn),
+            ('obs_socket', self.obs_socket),
+            ('info_conn', self.info_conn),
+            ('info_socket', self.info_socket)
+        ]
+        
+        for name, sock in sockets:
+            if sock:
+                try:
+                    sock.close()
+                    print(f"{name} 已成功關閉")
+                except Exception as e:
+                    print(f"關閉 {name} 時發生錯誤: {e}")
 
         # 關閉 HDF5 檔案
-        self.data_handler.close_epoch_file()
+        try:
+            self.data_handler.close_epoch_file()
+            print("HDF5 檔案已關閉")
+        except Exception as e:
+            print(f"關閉 HDF5 檔案時發生錯誤: {e}")
 
-        print("所有伺服器與檔案已關閉")
+        # 停止重置信號的線程
+        try:
+            self.reset_event.set()  # 通知重置信號線程終止
+            time.sleep(1)  # 等待線程終止
+            print("重置信號線程已終止")
+        except Exception as e:
+            print(f"關閉重置線程時發生錯誤: {e}")
+        
+        print("所有伺服器與資源已成功關閉")
 
 
 def signal_handler(sig, frame):
