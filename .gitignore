@@ -4,3 +4,4 @@ __pycache__/
 rltest/models
 rltest/train_logs
 rltest/logs
+*.h5
