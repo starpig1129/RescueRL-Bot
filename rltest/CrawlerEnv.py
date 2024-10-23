@@ -56,6 +56,8 @@ class CrawlerEnv(gym.Env):
         self.info_conn, self.info_addr = self.info_socket.accept()
         self.info_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         print("已連接到數據伺服器:", self.info_addr)
+        # 設置接收超時時間，例如 5 秒
+        self.info_conn.settimeout(5)
 
     def setup_obs_server(self):
         self.obs_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -243,6 +245,9 @@ class CrawlerEnv(gym.Env):
             json_data = json.loads(data_str)
             return json_data
 
+        except socket.timeout:
+            print("接收數據超時")
+            return None
         except Exception as e:
             print(f"接收數據時發生錯誤: {e}")
             self.info_conn.close()
