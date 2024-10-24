@@ -197,41 +197,51 @@ class CrawlerEnv(gym.Env):
 
     def receive_image(self):
         try:
+            # 接收影像長度資料
             image_len_bytes = self.recv_all(self.obs_conn, 4)
             if not image_len_bytes:
                 return None, None, None
             image_len = int.from_bytes(image_len_bytes, byteorder='little')
 
+            # 接收影像資料
             image_data = self.recv_all(self.obs_conn, image_len)
             if not image_data:
                 return None, None, None
 
+            # 將資料轉換為圖像
             nparr = np.frombuffer(image_data, np.uint8)
             origin_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-            if origin_image is not None:
-                results = self.YoloModel(origin_image, imgsz=(640, 384), device='cpu',
-                                         conf=0.7,
-                                         classes=[0],
-                                         show_boxes=False)[0]
+            
+            # 複製圖像作為 YOLO 的輸入
+            obs = origin_image.copy()
+            
+            if obs is not None:
+                # 使用 YOLO 模型進行推理 (使用 CUDA)
+                results = self.YoloModel(obs, imgsz=(640, 384), device='cuda:0',
+                                        conf=0.7, classes=[0], show_boxes=False)[0]
                 try:
+                    # 獲取 YOLO 模型的檢測框並確保範圍正確
                     x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
-                    obs = cv2.rectangle(results.orig_img, (x1, y1), (x2, y2), (0, 255, 0), -1)
-                except:
-                    obs = origin_image.copy()
+                    obs = cv2.rectangle(obs, (x1, y1), (x2, y2), (0, 255, 0), -1)  # 填滿矩形
+                except Exception as e:
+                    pass
 
+                # 如果開啟顯示，則顯示觀察空間
                 if obs is not None and self.show:
                     cv2.imshow("觀察空間", obs)
                     cv2.waitKey(1)
-
+                results = results.cpu().numpy()
+                # 返回 YOLO 結果、處理過的圖像與原始圖像
                 return results, obs, origin_image
             else:
                 return None, None, None
 
         except Exception as e:
             print(f"接收影像資料時發生錯誤: {e}")
+            # 重新連接影像接收的 Socket
             self.obs_conn, self.obs_addr = self.reconnect_socket(self.obs_socket, self.obs_address, '影像接收')
             return None, None, None
+
 
     def receive_data(self):
         try:
