@@ -15,7 +15,7 @@ from DataHandler import DataHandler
 
 
 class CrawlerEnv(gym.Env):
-    def __init__(self, show):
+    def __init__(self, show, epoch=0):
         super(CrawlerEnv, self).__init__()
         self.show = show
         self.action_space = gym.spaces.Discrete(9)
@@ -26,8 +26,9 @@ class CrawlerEnv(gym.Env):
         self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)
         self.reward_function = RewardFunction()
 
+        # 傳入當前世代(epoch)，讓 DataHandler 同步這個世代
         self.data_handler = DataHandler(base_dir="train_logs")
-        self.episode_counter = 0
+        self.epoch = epoch
         self.step_counter = 0
 
         # 建立伺服器
@@ -138,12 +139,13 @@ class CrawlerEnv(gym.Env):
             return None, 0, True, {}
 
     def reset(self):
-        if self.episode_counter > 0:
+        if self.epoch > 0:
             self.data_handler.close_epoch_file()
 
-        self.episode_counter += 1
+        self.epoch += 1
         self.step_counter = 0
-        self.data_handler.create_epoch_file(self.episode_counter)
+        # 創建一個帶有當前 epoch 的 HDF5 檔案
+        self.data_handler.create_epoch_file(self.epoch)
 
         # 等待重置訊號
         self.reset_event.wait()
@@ -329,7 +331,9 @@ signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
     try:
-        env = CrawlerEnv(show=True)
+        # 初始化環境時傳入當前世代(epoch)
+        current_epoch = 1  # 這裡可以設置為當前的 epoch，或通過訓練腳本動態傳入
+        env = CrawlerEnv(show=True, epoch=current_epoch)
         # 主迴圈，可以隨時按下 Ctrl+C 結束
         while True:
             obs = env.reset()
