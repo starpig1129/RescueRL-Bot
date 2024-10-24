@@ -62,22 +62,24 @@ class DataReader:
             
             print(f"成功使用切片讀取世代 {epoch} 的資料")
             return data
-# 使用範例
-data_reader = DataReader(base_dir="train_logs")
-epoch = 2
 
-# 取得指定世代的最大步數
-max_steps = data_reader.get_max_steps(epoch)
-if max_steps is not None:
-    print(f"世代 {epoch} 的最大步數為: {max_steps}")
-else:
-    print("異常")
-data_range = data_reader.load_range_data(epoch, slice(5, 1000, 100))
+if __name__ == "__main__":
+    # 使用範例
+    data_reader = DataReader(base_dir="train_logs")
+    epoch = 2
 
-if data_range:
-    print("成功讀取範圍資料:")
-    print("觀察空間 shape:", data_range['obs'].shape)
-    print("動作角度:", data_range['angle_degrees'])
-    print("獎勵:", data_range['reward'])
-else:
-    print("無範圍資料")
+    # 取得指定世代的最大步數
+    max_steps = data_reader.get_max_steps(epoch)
+    if max_steps is not None:
+        print(f"世代 {epoch} 的最大步數為: {max_steps}")
+    else:
+        print("異常")
+    data_range = data_reader.load_range_data(epoch, slice(5, 1000, 100))
+
+    if data_range:
+        print("成功讀取範圍資料:")
+        print("觀察空間 shape:", data_range['obs'].shape)
+        print("動作角度:", data_range['angle_degrees'])
+        print("獎勵:", data_range['reward'])
+    else:
+        print("無範圍資料")
