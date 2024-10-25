@@ -5,6 +5,7 @@ rltest/models
 rltest/train_logs
 rltest/logs
 *.h5
+*.zip
 output_chunks
 DataSplit.py
 DataDecompress.py

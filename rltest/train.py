@@ -19,10 +19,10 @@ model_params = {
     "policy": CustomPolicy,
     "env": None,  # 暫時設為 None，稍後會設置為 env
     "verbose": 2,
-    "learning_rate": 2.5e-4,
+    "learning_rate": 3e-4, # Increased learning rate
     "n_steps": 2048,
-    "batch_size": 64,
-    "n_epochs": 10,
+    "batch_size": 128, # Increased batch size
+    "n_epochs": 20, # Increased number of epochs
     "gamma": 0.99,
     "gae_lambda": 0.95,
     "clip_range": 0.2,
@@ -75,7 +75,7 @@ def main():
         model = PPO(**model_params)
 
     total_timesteps = 1_000_000
-    checkpoint_interval = 2048
+    checkpoint_interval = model_params['n_steps']
     
     # 訓練模型並保存檢查點
     for i in range(int(total_timesteps / checkpoint_interval)):
