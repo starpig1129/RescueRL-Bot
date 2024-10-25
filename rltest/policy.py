@@ -80,8 +80,8 @@ class CustomActor(nn.Module):
         self.fc3 = nn.Linear(128, action_dim)
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
+        x = torch.dropout(torch.relu(self.fc1(x)),0.5)
+        x = torch.dropout(torch.relu(self.fc2(x)),0.5)
         x = self.fc3(x)
         return x
 
@@ -93,8 +93,8 @@ class CustomCritic(nn.Module):
         self.fc3 = nn.Linear(128, 1)
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
+        x = torch.dropout(torch.relu(self.fc1(x)),0.5)
+        x = torch.dropout(torch.relu(self.fc2(x)),0.5)
         x = self.fc3(x)
         return x
 
