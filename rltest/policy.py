@@ -71,6 +71,18 @@ class CustomResNet(BaseFeaturesExtractor):
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x
+from torchvision import models
+
+class PretrainedResNet(BaseFeaturesExtractor):
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
+        super(PretrainedResNet, self).__init__(observation_space, features_dim)
+        resnet = models.resnet18(pretrained=True)
+        resnet.fc = nn.Identity()
+        self.extractor = resnet
+        self._features_dim = resnet.fc.in_features
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.extractor(observations)
 
 class CustomActor(nn.Module):
     def __init__(self, features_dim, action_dim):
@@ -103,7 +115,7 @@ class CustomPolicy(ActorCriticPolicy):
     def __init__(self, observation_space, action_space, lr_schedule, *args, **kwargs):
         super(CustomPolicy, self).__init__(observation_space, action_space, lr_schedule,
                                            *args, **kwargs, 
-                                           features_extractor_class=CustomResNet,
+                                           features_extractor_class=PretrainedResNet,
                                            features_extractor_kwargs={'features_dim': 512})
 
         # Custom Actor-Critic network
