@@ -131,7 +131,12 @@ class CrawlerEnv(gym.Env):
             # 儲存每一代的每一步數據
             self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
             self.step_counter += 1
-
+            
+            if obs is not None:
+                obs = obs / 255.0 
+                obs = obs.transpose((2, 0, 1)) 
+                obs = obs.astype(np.float32)
+                
             return obs, reward, done, {}
 
         except Exception as e:
@@ -154,6 +159,10 @@ class CrawlerEnv(gym.Env):
         # 接收初始觀察
         results, obs, origin_image = self.receive_image()
         print("環境重置完成")
+        if obs is not None:
+            obs = obs / 255.0 
+            obs = obs.transpose((2, 0, 1)) 
+            obs = obs.astype(np.float32)
         return obs
 
     def send_control_signal(self):
