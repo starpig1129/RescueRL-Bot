@@ -5,7 +5,7 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
         super(ResidualBlock, self).__init__()
@@ -73,13 +73,23 @@ class CustomResNet(BaseFeaturesExtractor):
         return x
 from torchvision import models
 
+from torchvision import models
+
 class PretrainedResNet(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
         super(PretrainedResNet, self).__init__(observation_space, features_dim)
+        
+        # Initialize the pretrained ResNet model
         resnet = models.resnet18(pretrained=True)
+        
+        # Get the number of features from the last linear layer (fc)
+        num_features = resnet.fc.in_features
+        
+        # Replace the fully connected layer with an identity mapping
         resnet.fc = nn.Identity()
+        
         self.extractor = resnet
-        self._features_dim = resnet.fc.in_features
+        self._features_dim = num_features  # Set the features dimension correctly
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         return self.extractor(observations)
@@ -90,11 +100,12 @@ class CustomActor(nn.Module):
         self.fc1 = nn.Linear(features_dim, 256)
         self.fc2 = nn.Linear(256, 128)
         self.fc3 = nn.Linear(128, action_dim)
+        self.dropout = nn.Dropout(0.5) 
 
     def forward(self, x):
-        x = torch.dropout(torch.relu(self.fc1(x)),0.5)
-        x = torch.dropout(torch.relu(self.fc2(x)),0.5)
-        x = self.fc3(x)
+        x = self.dropout(F.relu(self.fc1(x)))  
+        x = self.dropout(F.relu(self.fc2(x)))
+        x = self.fc3(x) 
         return x
 
 class CustomCritic(nn.Module):
@@ -103,12 +114,14 @@ class CustomCritic(nn.Module):
         self.fc1 = nn.Linear(features_dim, 256)
         self.fc2 = nn.Linear(256, 128)
         self.fc3 = nn.Linear(128, 1)
+        self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
-        x = torch.dropout(torch.relu(self.fc1(x)),0.5)
-        x = torch.dropout(torch.relu(self.fc2(x)),0.5)
-        x = self.fc3(x)
+        x = self.dropout(F.relu(self.fc1(x)))
+        x = self.dropout(F.relu(self.fc2(x)))
+        x = self.fc3(x)  
         return x
+
 
 # Custom policy class overriding the ActorCriticPolicy
 class CustomPolicy(ActorCriticPolicy):
