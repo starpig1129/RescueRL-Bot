@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 import cv2
+import torch
 from ultralytics import YOLO
 import socket
 import struct
@@ -12,14 +13,15 @@ import sys
 import time
 from reward.Reward_3 import RewardFunction
 from DataHandler import DataHandler
-
-
+from torchvision import transforms 
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
 class CrawlerEnv(gym.Env):
     def __init__(self, show, epoch=0):
         super(CrawlerEnv, self).__init__()
         self.show = show
         self.action_space = gym.spaces.Discrete(9)
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(384, 640, 3), dtype=np.uint8)
+        self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(3, 224, 224), dtype=np.float32)
 
         self.magnitude = 5.0
         self.angle_degrees = 90
@@ -103,6 +105,18 @@ class CrawlerEnv(gym.Env):
             except Exception as e:
                 print(f"接收重置訊號時發生錯誤: {e}")
                 break
+    def preprocess_observation(self, obs):
+        # Convert from numpy array to torch tensor
+        obs = torch.from_numpy(obs).float()
+        # Normalize the image
+        obs = obs / 255.0
+        # Permute dimensions from HWC to CHW
+        obs = obs.permute(2, 0, 1)
+        # Apply normalization
+        obs = normalize(obs)
+        resize = transforms.Resize((224, 224))
+        obs = resize(obs)
+        return obs
 
     def step(self, action):
         try:
@@ -132,10 +146,8 @@ class CrawlerEnv(gym.Env):
             self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
             self.step_counter += 1
             
-            if obs is not None:
-                obs = obs / 255.0 
-                obs = obs.transpose((2, 0, 1)) 
-                obs = obs.astype(np.float32)
+            # In step and reset methods
+            obs = self.preprocess_observation(obs)
                 
             return obs, reward, done, {}
 
@@ -159,10 +171,7 @@ class CrawlerEnv(gym.Env):
         # 接收初始觀察
         results, obs, origin_image = self.receive_image()
         print("環境重置完成")
-        if obs is not None:
-            obs = obs / 255.0 
-            obs = obs.transpose((2, 0, 1)) 
-            obs = obs.astype(np.float32)
+        obs = self.preprocess_observation(obs)
         return obs
 
     def send_control_signal(self):
