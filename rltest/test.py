@@ -177,10 +177,6 @@ def main():
         print(f"初始化環境時發生錯誤: {e}")
         sys.exit(1)
     
-    # 建立測試記錄目錄
-    test_results_dir = "test_results"
-    os.makedirs(test_results_dir, exist_ok=True)
-    
     try:
         for model_path in model_paths:
             print(f"\n測試模型: {model_path}")
@@ -189,12 +185,6 @@ def main():
             try:
                 # 載入模型
                 policy = load_model_from_zip(model_path, device)
-                
-                # 初始化該模型的測試資料記錄
-                test_data_handler = DataHandler(
-                    base_dir=os.path.join(test_results_dir, model_name)
-                )
-                test_data_handler.create_epoch_file(epoch=0)
                 
                 # 運行測試episodes
                 episode_rewards = []
@@ -215,9 +205,6 @@ def main():
                 print(f"\n模型 {model_path} 的測試結果:")
                 print(f"平均獎勵: {mean_reward:.2f} ± {std_reward:.2f}")
                 print(f"平均步數: {mean_steps:.2f} ± {std_steps:.2f}")
-                
-                # 關閉測試資料記錄
-                test_data_handler.close_epoch_file()
                 
             except Exception as e:
                 print(f"測試模型 {model_path} 時發生錯誤: {e}")
