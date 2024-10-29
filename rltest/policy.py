@@ -87,7 +87,7 @@ class CustomPolicy(ActorCriticPolicy):
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
-        
+        self.action_logits = None
     def _build(self, lr_schedule) -> None:
         # Construct action and value networks using custom architectures
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
@@ -104,14 +104,14 @@ class CustomPolicy(ActorCriticPolicy):
         features = self.extract_features(obs)
         
         # Get the action logits from the actor and the value from the critic
-        action_logits = self.action_net(features)
+        self.action_logits = self.action_net(features)
         value = self.value_net(features)
         
         # Create a distribution for the action (Categorical for discrete actions)
-        action_dist = torch.distributions.Categorical(logits=action_logits)
+        action_dist = torch.distributions.Categorical(logits=self.action_logits)
         
         if deterministic:
-            actions = torch.argmax(action_logits, dim=1)
+            actions = torch.argmax(self.action_logits, dim=1)
         else:
             actions = action_dist.sample()
         
@@ -134,3 +134,4 @@ class CustomPolicy(ActorCriticPolicy):
         entropy = action_dist.entropy().mean()
         
         return log_prob, entropy, value
+    

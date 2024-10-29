@@ -62,7 +62,7 @@ def get_latest_epoch(model_dir="models"):
 def main():
     global env, model, current_epoch
     current_epoch = get_latest_epoch()  # 初始化當前世代數
-    env = CrawlerEnv(show=False, epoch=current_epoch)  # 傳入當前世代給環境
+    env = CrawlerEnv(show=False, epoch=current_epoch, test_mode=False)  # 傳入當前世代給環境
     model_params['env'] = env  # 將環境傳遞給模型
 
     # 檢查是否有之前保存的模型
