@@ -13,12 +13,18 @@ public class CrawlerDataSender : MonoBehaviour
     public Camera crawlerCamera;
     public string targetTag = "TargetObject";
     private bool isConnected = false;
+    private float sendInterval = 0.03f;
 
-    // 優化物件池用於減少垃圾回收
-    private Queue<byte[]> byteArrayPool = new Queue<byte[]>();
-    private float sendInterval = 0.03f; // 改為與camera相同的傳輸間隔
+    // 常量定義
+    private const int MAX_MESSAGE_SIZE = 1000000; // 1MB 限制，對應 Python 端限制
+    private readonly object streamLock = new object();
 
     private void Start()
+    {
+        ConnectToServer();
+    }
+
+    private void ConnectToServer()
     {
         try
         {
@@ -29,13 +35,14 @@ public class CrawlerDataSender : MonoBehaviour
             isConnected = true;
             Debug.Log("成功連接到伺服器。");
 
-            // 使用InvokeRepeating替代Update中的計時器
             InvokeRepeating("SendData", 0f, sendInterval);
         }
         catch (SocketException e)
         {
-            Debug.LogError("Socket exception: " + e.ToString());
-            this.enabled = false;
+            Debug.LogError($"Socket連接異常: {e}");
+            isConnected = false;
+            // 5秒後重試連接
+            Invoke("ConnectToServer", 5f);
         }
     }
 
@@ -43,83 +50,120 @@ public class CrawlerDataSender : MonoBehaviour
     {
         if (!isConnected || stream == null) return;
 
-        Debug.Log("開始處理資料封包...");
+        try
+        {
+            var data = PrepareData();
+            string jsonData = JsonConvert.SerializeObject(data);
+            byte[] dataBytes = Encoding.UTF8.GetBytes(jsonData);
 
+            // 檢查資料大小是否超過限制
+            if (dataBytes.Length > MAX_MESSAGE_SIZE)
+            {
+                Debug.LogError($"資料大小 ({dataBytes.Length} bytes) 超過限制 ({MAX_MESSAGE_SIZE} bytes)");
+                return;
+            }
+
+            // 使用 lock 確保資料完整性
+            lock (streamLock)
+            {
+                if (stream.CanWrite)
+                {
+                    // 使用大端序(Big-Endian)發送長度，對應Python端的接收方式
+                    byte[] lengthBytes = BitConverter.GetBytes(dataBytes.Length);
+                    if (BitConverter.IsLittleEndian)
+                    {
+                        Array.Reverse(lengthBytes);
+                    }
+
+                    stream.Write(lengthBytes, 0, 4);
+                    stream.Write(dataBytes, 0, dataBytes.Length);
+                    stream.Flush();
+
+                    Debug.Log($"成功發送資料，長度: {dataBytes.Length} bytes");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"發送資料時發生錯誤: {e}");
+            HandleConnectionError();
+        }
+    }
+
+    private object PrepareData()
+    {
         Vector3 crawlerPosition = transform.position;
         Vector3 crawlerRotation = transform.up;
-
         GameObject[] targetObjects = GameObject.FindGameObjectsWithTag(targetTag);
-        Debug.Log($"發現 {targetObjects.Length} 個標記為 {targetTag} 的目標物體。");
 
-        var targetDataList = new List<object>(targetObjects.Length);
+        var targetDataList = new List<object>();
+
         foreach (GameObject targetObject in targetObjects)
         {
             Vector3 targetPosition = targetObject.transform.position;
             Vector3 screenPosition = crawlerCamera.WorldToScreenPoint(targetPosition);
 
+            // 計算正規化的螢幕座標 (0-1 範圍)
+            float normalizedX = screenPosition.z > 0 ? screenPosition.x / Screen.width : 0f;
+            float normalizedY = screenPosition.z > 0 ? screenPosition.y / Screen.height : 0f;
+
             bool isInScreen = screenPosition.z > 0 &&
-                            screenPosition.x >= 0 && screenPosition.x <= Screen.width &&
-                            screenPosition.y >= 0 && screenPosition.y <= Screen.height;
+                            normalizedX >= 0 && normalizedX <= 1 &&
+                            normalizedY >= 0 && normalizedY <= 1;
 
             targetDataList.Add(new
             {
                 position = new { x = targetPosition.x, y = targetPosition.y, z = targetPosition.z },
-                screenPosition = isInScreen ? new { x = (float)screenPosition.x, y = (float)screenPosition.y } : new { x = 0f, y = 0f }
+                screenPosition = isInScreen ? new { x = normalizedX, y = normalizedY } : new { x = 0f, y = 0f }
             });
         }
 
-        var data = new
+        return new
         {
             position = new { x = crawlerPosition.x, y = crawlerPosition.y, z = crawlerPosition.z },
             rotation = new { x = crawlerRotation.x, y = crawlerRotation.y, z = crawlerRotation.z },
             targets = targetDataList
         };
+    }
 
-        try
-        {
-            string jsonData = JsonConvert.SerializeObject(data);
-            byte[] dataBytes = Encoding.UTF8.GetBytes(jsonData);
+    private void HandleConnectionError()
+    {
+        isConnected = false;
+        CancelInvoke("SendData");
 
-            // 直接發送資料長度和資料本身
-            try
-            {
-                if (stream.CanWrite)
-                {
-                    // 先發送資料長度
-                    byte[] lengthBytes = BitConverter.GetBytes(dataBytes.Length);
-                    stream.Write(lengthBytes, 0, 4);
-                    // 再發送資料本身
-                    stream.Write(dataBytes, 0, dataBytes.Length);
-                    stream.Flush();
-                    Debug.Log($"成功發送資料，長度: {dataBytes.Length}");
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"發送資料失敗: {e}");
-                isConnected = false;
-            }
-        }
-        catch (Exception e)
+        if (stream != null)
         {
-            Debug.LogError($"序列化失敗: {e}");
+            stream.Close();
+            stream = null;
         }
+
+        if (client != null)
+        {
+            client.Close();
+            client = null;
+        }
+
+        // 嘗試重新連接
+        Invoke("ConnectToServer", 5f);
     }
 
     private void OnApplicationQuit()
     {
-        Debug.Log("關閉連接...");
+        Debug.Log("正在關閉連接...");
+        CancelInvoke("SendData");
+
         if (stream != null)
         {
             stream.Close();
+            stream = null;
         }
+
         if (client != null)
         {
             client.Close();
+            client = null;
         }
 
-        // 取消定期發送
-        CancelInvoke("SendData");
         Debug.Log("連接已關閉。");
     }
 }
