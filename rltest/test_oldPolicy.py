@@ -5,16 +5,71 @@ import torch.nn as nn
 import numpy as np
 import zipfile
 import io
-import sys
-import gym
-from policy import CustomResNet,CustomActor
+from policy import CustomResNet, CustomActor
 from CrawlerEnv import CrawlerEnv
 from DataHandler import DataHandler
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += self.shortcut(residual)
+        out = self.relu(out)
+        return out
+
+class TestResNet(CustomResNet):
+    def __init__(self, observation_space=None, features_dim=512):
+        super(TestResNet, self).__init__(observation_space, features_dim)
+        self.layer_outputs = {}
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        # 儲存輸入
+        self.layer_outputs['input'] = observations.detach().cpu().numpy()
+
+        # 前向傳播並儲存中間層輸出
+        x = self.conv1(observations)
+        x = self.bn1(x)
+        x = self.relu(x)
+        self.layer_outputs['conv1_output'] = x.detach().cpu().numpy()
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        self.layer_outputs['final_residual_output'] = x.detach().cpu().numpy()
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        features = self.fc(x)
+        self.layer_outputs['feature_output'] = features.detach().cpu().numpy()
+
+        return features
+
 class TestPolicy:
-    def __init__(self, state_dim=(3, 224, 224), action_dim=9,features_dim=512):
+    def __init__(self, state_dim=(3, 224, 224), action_dim=9, features_dim=512):
         # 初始化特徵提取器，保持與原始架構一致
-        self.features_extractor = CustomResNet(observation_space=gym.spaces.Box(low=0, high=255, shape=(384, 640, 3), dtype=np.uint8), features_dim=512)
+        self.features_extractor = TestResNet(features_dim=features_dim)
         
         # 動作網路
         self.actor = CustomActor(features_dim, action_dim)
@@ -30,7 +85,7 @@ class TestPolicy:
             
             if extractor_dict:
                 print("載入特徵提取器權重...")
-                self.features_extractor.extractor.load_state_dict(extractor_dict)
+                self.features_extractor.load_state_dict(extractor_dict)
             
             # 載入 actor 網路的權重
             actor_dict = {}
@@ -51,8 +106,8 @@ class TestPolicy:
             raise
         
     def to(self, device):
-        self.features_extractor.to(device)
-        self.actor.to(device)
+        self.features_extractor = self.features_extractor.to(device)
+        self.actor = self.actor.to(device)
         return self
         
     def eval(self):
@@ -69,12 +124,17 @@ class TestPolicy:
             if observation.dim() == 3:
                 observation = observation.unsqueeze(0)
                 
-            # 使用特徵提取器
+            # 使用特徵提取器並獲取中間層輸出
             features = self.features_extractor(observation)
+            layer_outputs = self.features_extractor.layer_outputs
+            
             # 通過動作網路
             action_logits = self.actor(features)
+            # 保存 actor 輸出
+            layer_outputs['actor_output'] = action_logits.detach().cpu().numpy()
+            
             action = torch.argmax(action_logits, dim=1)
-            return action.item()
+            return action.item(), layer_outputs
 
 def load_model_from_zip(model_path, device):
     """
@@ -115,28 +175,37 @@ def load_model_from_zip(model_path, device):
         print(f"載入模型時發生錯誤: {e}")
         raise
 
-def test_episode(env, policy, episode_num, device, render=False):
+def test_episode(env, policy, test_data_handler, episode_num, step_counter, device, render=False):
     obs = env.reset()
     done = False
     total_reward = 0
     steps = 0
     
     while not done:
-        action = policy.predict(obs, device)
-        obs, reward, done, _ = env.step(action)
+        # 獲取動作和層輸出
+        action, layer_outputs = policy.predict(obs, device)
+        obs, reward, done, info = env.step(action)
+        
+        # 記錄數據
+        test_data_handler.save_step_data(
+            step=step_counter,
+            obs=obs,
+            angle_degrees=info.get('angle_degrees', 0),
+            reward=reward,
+            reward_list=[0] * 12,  # 或從 info 中獲取實際的 reward_list
+            origin_image=info.get('origin_image', obs),
+            results=info.get('results', None),
+            layer_outputs=layer_outputs
+        )
+        
         total_reward += reward
         steps += 1
+        step_counter += 1
         
         if render:
             env.render()
             
-    return total_reward, steps
-
-def find_model_files(models_dir="models"):
-    """找到所有模型檔案並按照世代排序"""
-    model_files = [f for f in os.listdir(models_dir) if f.endswith('.zip')]
-    model_files.sort(key=lambda x: int(x.split('_ep')[1].split('.')[0]))
-    return [os.path.join(models_dir, f) for f in model_files]
+    return total_reward, steps, step_counter
 
 def main():
     parser = argparse.ArgumentParser(description='Crawler 模型測試程式')
@@ -171,7 +240,7 @@ def main():
     
     print(f"將要測試的模型數量: {len(model_paths)}")
     
-    # 初始化環境，設置test_mode為True
+    # 初始化環境
     try:
         env = CrawlerEnv(show=args.render, test_mode=True)
     except Exception as e:
@@ -187,16 +256,26 @@ def main():
                 # 載入模型
                 policy = load_model_from_zip(model_path, device)
                 
+                # 初始化該模型的測試資料記錄
+                test_data_handler = DataHandler(
+                    base_dir=os.path.join("test_results", model_name)
+                )
+                test_data_handler.create_epoch_file(epoch=0)
+                
                 # 運行測試episodes
                 episode_rewards = []
                 episode_steps = []
+                step_counter = 1  # 從1開始計數
                 
                 for episode in range(args.episodes):
-                    reward, steps = test_episode(env, policy, episode, device, args.render)
+                    reward, steps, step_counter = test_episode(
+                        env, policy, test_data_handler, 
+                        episode, step_counter, device, args.render
+                    )
                     episode_rewards.append(reward)
                     episode_steps.append(steps)
                     print(f"Episode {episode + 1}: Reward = {reward:.2f}, Steps = {steps}")
-                    
+                
                 # 計算並輸出統計數據
                 mean_reward = np.mean(episode_rewards)
                 std_reward = np.std(episode_rewards)
@@ -207,24 +286,18 @@ def main():
                 print(f"平均獎勵: {mean_reward:.2f} ± {std_reward:.2f}")
                 print(f"平均步數: {mean_steps:.2f} ± {std_steps:.2f}")
                 
+                # 關閉測試資料記錄
+                test_data_handler.close_epoch_file()
+                
             except Exception as e:
                 print(f"測試模型 {model_path} 時發生錯誤: {e}")
                 continue
         
         print("\n所有模型測試完成！")
         
-    except Exception as e:
-        print(f"執行測試時發生錯誤: {e}")
     finally:
-        # 確保環境被正確關閉
-        try:
-            env.close()
-            print("環境已關閉")
-        except Exception as e:
-            print(f"關閉環境時發生錯誤: {e}")
-        
-        # 正常終止程式
-        sys.exit(0)
+        env.close()
+        print("環境已關閉")
 
 if __name__ == "__main__":
     main()

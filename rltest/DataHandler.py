@@ -104,23 +104,40 @@ class DataHandler:
         }
 
     def create_layer_output_datasets(self):
-        # 為神經網路中間層輸出創建資料集
+        """
+        為神經網路中間層輸出創建資料集，根據實際的網絡架構設置正確的形狀
+        """
+        # 計算各層的輸出尺寸
+        input_h, input_w = 384, 640
+        
+        # Conv1: stride=2, kernel=7
+        conv1_h = (input_h + 2*3 - 7) // 2 + 1  # padding=3
+        conv1_w = (input_w + 2*3 - 7) // 2 + 1
+        
+        # MaxPool: stride=2, kernel=3
+        pool1_h = (conv1_h + 2*1 - 3) // 2 + 1  # padding=1
+        pool1_w = (conv1_w + 2*1 - 3) // 2 + 1
+        
+        # 計算最終的特徵圖尺寸（經過多個stride=2的層）
+        final_h = pool1_h // 8  # 經過3個stride=2的層
+        final_w = pool1_w // 8
+        
         self.layer_datasets = {
             'input': self.hdf5_file.create_dataset(
-                'layer_input', (0, 3, 224, 224),
-                maxshape=(None, 3, 224, 224),
+                'layer_input', (0, 3, input_h, input_w),
+                maxshape=(None, 3, input_h, input_w),
                 dtype=np.float32,
                 chunks=True
             ),
             'conv1_output': self.hdf5_file.create_dataset(
-                'layer_conv1', (0, 64, 112, 112),
-                maxshape=(None, 64, 112, 112),
+                'layer_conv1', (0, 64, conv1_h, conv1_w),
+                maxshape=(None, 64, conv1_h, conv1_w),
                 dtype=np.float32,
                 chunks=True
             ),
             'final_residual_output': self.hdf5_file.create_dataset(
-                'layer_final_residual', (0, 512, 7, 7),
-                maxshape=(None, 512, 7, 7),
+                'layer_final_residual', (0, 512, final_h, final_w),
+                maxshape=(None, 512, final_h, final_w),
                 dtype=np.float32,
                 chunks=True
             ),
@@ -137,6 +154,11 @@ class DataHandler:
                 chunks=True
             )
         }
+    
+        # 打印各層的形狀以便調試
+        print("Layer output shapes:")
+        for name, dataset in self.layer_datasets.items():
+            print(f"{name}: {dataset.shape[1:]}")
 
     def _resize_datasets(self):
         new_max_steps = self.current_max_steps + self.resize_step

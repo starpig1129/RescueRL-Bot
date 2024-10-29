@@ -22,7 +22,7 @@ class CrawlerEnv(gym.Env):
         self.show = show
         self.test_mode = test_mode
         self.action_space = gym.spaces.Discrete(9)
-        self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(3, 224, 224), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(384, 640, 3), dtype=np.uint8)
 
         self.magnitude = 5.0
         self.angle_degrees = 90
@@ -209,7 +209,7 @@ class CrawlerEnv(gym.Env):
             self.step_counter += 1
             
             # In step and reset methods
-            obs = self.preprocess_observation(obs)
+            #obs = self.preprocess_observation(obs)
                 
             return obs, reward, done, {}
 
@@ -233,7 +233,7 @@ class CrawlerEnv(gym.Env):
         # 接收初始觀察
         results, obs, origin_image = self.receive_image()
         print("環境重置完成")
-        obs = self.preprocess_observation(obs)
+        #obs = self.preprocess_observation(obs)
         return obs
 
     def send_control_signal(self):
