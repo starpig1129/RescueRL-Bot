@@ -12,20 +12,39 @@ class PretrainedResNet(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
         super(PretrainedResNet, self).__init__(observation_space, features_dim)
         
-        # Initialize the pretrained ResNet model
+        # 初始化预训练的 ResNet 模型
         resnet = models.resnet18(pretrained=True)
-        
-        # Get the number of features from the last linear layer (fc)
         num_features = resnet.fc.in_features
-        
-        # Replace the fully connected layer with an identity mapping
         resnet.fc = nn.Identity()
         
         self.extractor = resnet
-        self._features_dim = num_features  # Set the features dimension correctly
-
+        self._features_dim = num_features  # 设置特征维度为 512
+        
+        # 初始化用于存储中间输出的字典
+        self.layer_outputs = {}
+        
+        # 注册 forward hooks
+        self.extractor.conv1.register_forward_hook(self.get_activation('conv1_output'))
+        self.extractor.layer4.register_forward_hook(self.get_activation('layer4_output'))
+    
+    def get_activation(self, name):
+        def hook(model, input, output):
+            self.layer_outputs[name] = output.detach().cpu().numpy()
+        return hook
+    
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.extractor(observations)
+        # 存储输入
+        self.layer_outputs['input'] = observations.detach().cpu().numpy()
+        
+        # 通过特征提取器
+        features = self.extractor(observations)
+        
+        # 存储最终的特征输出
+        self.layer_outputs['features_output'] = features.detach().cpu().numpy()
+        
+        return features
+
+
 
 class CustomActor(nn.Module):
     def __init__(self, features_dim, action_dim):

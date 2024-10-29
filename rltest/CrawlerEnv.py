@@ -17,9 +17,10 @@ from torchvision import transforms
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 class CrawlerEnv(gym.Env):
-    def __init__(self, show, epoch=0):
+    def __init__(self, show, epoch=0, test_mode=False):
         super(CrawlerEnv, self).__init__()
         self.show = show
+        self.test_mode = test_mode
         self.action_space = gym.spaces.Discrete(9)
         self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(3, 224, 224), dtype=np.float32)
 
@@ -28,83 +29,144 @@ class CrawlerEnv(gym.Env):
         self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)
         self.reward_function = RewardFunction()
 
-        # 傳入當前世代(epoch)，讓 DataHandler 同步這個世代
-        self.data_handler = DataHandler(base_dir="train_logs")
+        # 初始化 socket 相關變量
+        self.control_socket = None
+        self.control_conn = None
+        self.info_socket = None
+        self.info_conn = None
+        self.obs_socket = None
+        self.obs_conn = None
+        self.reset_socket = None
+        self.reset_conn = None
+        
+        # 根據測試模式選擇不同的儲存目錄
+        base_dir = "test_logs" if test_mode else "train_logs"
+        self.data_handler = DataHandler(base_dir=base_dir)
         self.epoch = epoch
         self.step_counter = 0
+        self.reset_event = threading.Event()
+        self.reset_thread = None
+        self.reset_thread_stop = threading.Event()
 
-        # 建立伺服器
+        # 建立伺服器連接
+        try:
+            self.setup_all_servers()
+        except Exception as e:
+            self.close()
+            raise Exception(f"設置伺服器時發生錯誤: {e}")
+        
+    def setup_all_servers(self):
+        """設置所有伺服器"""
         self.setup_control_server()
         self.setup_info_server()
         self.setup_obs_server()
         self.setup_reset_server()
-
+        
     def setup_control_server(self):
+        """設置控制伺服器"""
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.control_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.control_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.control_address = ('localhost', 5000)
-        self.control_socket.bind(self.control_address)
-        self.control_socket.listen(5)
-        print('控制伺服器已啟動，等待連接...')
-        self.control_conn, self.control_addr = self.control_socket.accept()
-        self.control_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        print("已連接到控制伺服器:", self.control_addr)
+        try:
+            self.control_socket.bind(self.control_address)
+            self.control_socket.listen(5)
+            print('控制伺服器已啟動，等待連接...')
+            self.control_socket.settimeout(10)  # 設置超時
+            self.control_conn, self.control_addr = self.control_socket.accept()
+            self.control_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            print("已連接到控制伺服器:", self.control_addr)
+        except Exception as e:
+            raise Exception(f"控制伺服器設置失敗: {e}")
 
     def setup_info_server(self):
+        """設置數據伺服器"""
         self.info_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.info_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.info_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.info_address = ('localhost', 8000)
-        self.info_socket.bind(self.info_address)
-        self.info_socket.listen(5)
-        print('數據伺服器已啟動，等待連接...')
-        self.info_conn, self.info_addr = self.info_socket.accept()
-        self.info_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        print("已連接到數據伺服器:", self.info_addr)
-        self.info_conn.settimeout(5)
+        try:
+            self.info_socket.bind(self.info_address)
+            self.info_socket.listen(5)
+            print('數據伺服器已啟動，等待連接...')
+            self.info_socket.settimeout(10)  # 設置超時
+            self.info_conn, self.info_addr = self.info_socket.accept()
+            self.info_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.info_conn.settimeout(5)
+            print("已連接到數據伺服器:", self.info_addr)
+        except Exception as e:
+            raise Exception(f"數據伺服器設置失敗: {e}")
 
     def setup_obs_server(self):
+        """設置觀察伺服器"""
         self.obs_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.obs_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.obs_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.obs_address = ('localhost', 6000)
-        self.obs_socket.bind(self.obs_address)
-        self.obs_socket.listen(5)
-        print("影像接收伺服器已啟動，等待連接...")
-        self.obs_conn, self.obs_addr = self.obs_socket.accept()
-        self.obs_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        print("已連接到影像接收伺服器:", self.obs_addr)
+        try:
+            self.obs_socket.bind(self.obs_address)
+            self.obs_socket.listen(5)
+            print("影像接收伺服器已啟動，等待連接...")
+            self.obs_socket.settimeout(10)  # 設置超時
+            self.obs_conn, self.obs_addr = self.obs_socket.accept()
+            self.obs_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            print("已連接到影像接收伺服器:", self.obs_addr)
+        except Exception as e:
+            raise Exception(f"影像接收伺服器設置失敗: {e}")
 
     def setup_reset_server(self):
+        """設置重置伺服器"""
         self.reset_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.reset_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.reset_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.reset_address = ('localhost', 7000)
-        self.reset_socket.bind(self.reset_address)
-        self.reset_socket.listen(5)
-        print("重置訊號接收伺服器已啟動，等待連接...")
-
-        self.reset_event = threading.Event()  # 用於同步重置訊號
-
-        # 在一個新的執行緒中啟動重置訊號接收伺服器
-        reset_thread = threading.Thread(target=self.accept_reset_connections)
-        reset_thread.daemon = True
-        reset_thread.start()
+        try:
+            self.reset_socket.bind(self.reset_address)
+            self.reset_socket.listen(5)
+            print("重置訊號接收伺服器已啟動，等待連接...")
+            self.reset_socket.settimeout(10)  # 設置超時
+            
+            # 重置相關的事件標誌
+            self.reset_event = threading.Event()
+            self.reset_thread_stop = threading.Event()
+            
+            # 啟動重置訊號接收線程
+            self.reset_thread = threading.Thread(target=self.accept_reset_connections)
+            self.reset_thread.daemon = True
+            self.reset_thread.start()
+        except Exception as e:
+            raise Exception(f"重置伺服器設置失敗: {e}")
 
     def accept_reset_connections(self):
-        while True:
+        """處理重置連接的線程函數"""
+        while not self.reset_thread_stop.is_set():
             try:
                 print('連線重置訊號發送端中')
+                self.reset_socket.settimeout(1)  # 短暫的超時，以便能夠檢查停止標誌
                 reset_conn, reset_addr = self.reset_socket.accept()
                 print("已連接到重置訊號發送端:", reset_addr)
-                while True:
-                    data = reset_conn.recv(4)
-                    if not data:
+                
+                while not self.reset_thread_stop.is_set():
+                    try:
+                        data = reset_conn.recv(4)
+                        if not data:
+                            break
+                        signal = int.from_bytes(data, byteorder='little')
+                        if signal == 1:
+                            self.reset_event.set()
+                    except socket.timeout:
+                        continue
+                    except Exception:
                         break
-                    signal = int.from_bytes(data, byteorder='little')
-                    print(f"接收到的重置訊號值: {signal}")
-                    if signal == 1:
-                        self.reset_event.set()
+                        
+                reset_conn.close()
+            except socket.timeout:
+                continue
             except Exception as e:
-                print(f"接收重置訊號時發生錯誤: {e}")
-                break
+                if not self.reset_thread_stop.is_set():
+                    print(f"重置連接發生錯誤: {e}")
+                continue
+            
     def preprocess_observation(self, obs):
         # Convert from numpy array to torch tensor
         obs = torch.from_numpy(obs).float()
@@ -311,41 +373,53 @@ class CrawlerEnv(gym.Env):
         pass
 
     def close(self):
+        """關閉環境和所有連接"""
+        print("正在關閉環境...")
+        
+        # 停止重置訊號線程
+        if hasattr(self, 'reset_thread_stop'):
+            self.reset_thread_stop.set()
+        
+        # 等待重置線程結束
+        if hasattr(self, 'reset_thread') and self.reset_thread is not None:
+            self.reset_thread.join(timeout=1)
+        
         # 關閉所有連接
-        sockets = [
-            ('reset_socket', self.reset_socket),
-            ('control_conn', self.control_conn),
-            ('control_socket', self.control_socket),
-            ('obs_conn', self.obs_conn),
-            ('obs_socket', self.obs_socket),
-            ('info_conn', self.info_conn),
-            ('info_socket', self.info_socket)
+        connections = [
+            ('control_conn', 'control_socket'),
+            ('info_conn', 'info_socket'),
+            ('obs_conn', 'obs_socket'),
+            ('reset_conn', 'reset_socket')
         ]
         
-        for name, sock in sockets:
-            if sock:
+        for conn_attr, socket_attr in connections:
+            # 關閉連接
+            if hasattr(self, conn_attr) and getattr(self, conn_attr) is not None:
                 try:
-                    sock.close()
-                    print(f"{name} 已成功關閉")
+                    getattr(self, conn_attr).close()
+                    print(f"{conn_attr} 已關閉")
                 except Exception as e:
-                    print(f"關閉 {name} 時發生錯誤: {e}")
-
-        # 關閉 HDF5 檔案
-        try:
-            self.data_handler.close_epoch_file()
-            print("HDF5 檔案已關閉")
-        except Exception as e:
-            print(f"關閉 HDF5 檔案時發生錯誤: {e}")
-
-        # 停止重置信號的線程
-        try:
-            self.reset_event.set()  # 通知重置信號線程終止
-            time.sleep(1)  # 等待線程終止
-            print("重置信號線程已終止")
-        except Exception as e:
-            print(f"關閉重置線程時發生錯誤: {e}")
+                    print(f"關閉 {conn_attr} 時發生錯誤: {e}")
+                setattr(self, conn_attr, None)
+            
+            # 關閉 socket
+            if hasattr(self, socket_attr) and getattr(self, socket_attr) is not None:
+                try:
+                    getattr(self, socket_attr).close()
+                    print(f"{socket_attr} 已關閉")
+                except Exception as e:
+                    print(f"關閉 {socket_attr} 時發生錯誤: {e}")
+                setattr(self, socket_attr, None)
         
-        print("所有伺服器與資源已成功關閉")
+        # 關閉數據處理器
+        if hasattr(self, 'data_handler'):
+            try:
+                self.data_handler.close_epoch_file()
+                print("數據處理器已關閉")
+            except Exception as e:
+                print(f"關閉數據處理器時發生錯誤: {e}")
+        
+        print("環境關閉完成")
 
 
 def signal_handler(sig, frame):
