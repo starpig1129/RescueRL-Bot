@@ -205,6 +205,7 @@ class CrawlerEnv(gym.Env):
             reward, reward_list = self.reward_function.get_reward(results=results, reward_data=reward_data)
             done = self.reset_event.is_set()
 
+            self.step_counter += 1
             # 儲存每一代的每一步數據
             self.data_handler.save_step_data(
                 self.step_counter, 
@@ -216,7 +217,6 @@ class CrawlerEnv(gym.Env):
                 results,
                 self.layer_outputs
             )
-            self.step_counter += 1
             
             # In step and reset methods
             obs = self.preprocess_observation(obs)
