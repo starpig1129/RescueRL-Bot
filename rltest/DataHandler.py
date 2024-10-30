@@ -193,7 +193,7 @@ class DataHandler:
         將數據寫入 HDF5 文件
         """
         try:
-            step = data['step'] - 1  # 調整索引，從 0 開始
+            step = data['step']
 
             # 處理YOLO結果
             results = data['results']
