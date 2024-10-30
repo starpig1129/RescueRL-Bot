@@ -80,7 +80,7 @@ class TestPolicy:
             self.layer_outputs = {
                 'input': self.features_extractor.layer_outputs['input'],
                 'conv1_output': self.features_extractor.layer_outputs['conv1_output'],
-                'layer4_output': self.features_extractor.layer_outputs['layer4_output'],
+                'final_residual_output': self.features_extractor.layer_outputs['final_residual_output'],
                 'features_output': self.features_extractor.layer_outputs['features_output'],
                 'actor_output': action_logits.detach().cpu().numpy()
             }

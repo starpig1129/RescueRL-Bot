@@ -124,7 +124,7 @@ class DataHandler:
                 dtype=np.float32,
                 chunks=True
             ),
-            'feature_output': self.hdf5_file.create_dataset(
+            'features_output': self.hdf5_file.create_dataset(
                 'layer_feature', (0, 512),
                 maxshape=(None, 512),
                 dtype=np.float32,
@@ -160,7 +160,6 @@ class DataHandler:
                       origin_image, results, layer_outputs):
         if step >= self.current_max_steps:
             self._resize_datasets()
-
         # 將所有資料打包成字典
         data = {
             'step': step,

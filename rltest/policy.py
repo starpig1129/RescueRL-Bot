@@ -25,7 +25,7 @@ class PretrainedResNet(BaseFeaturesExtractor):
         
         # 注册 forward hooks
         self.extractor.conv1.register_forward_hook(self.get_activation('conv1_output'))
-        self.extractor.layer4.register_forward_hook(self.get_activation('layer4_output'))
+        self.extractor.layer4.register_forward_hook(self.get_activation('final_residual_output'))
     
     def get_activation(self, name):
         def hook(model, input, output):

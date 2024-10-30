@@ -199,9 +199,8 @@ if __name__ == "__main__":
             print(f"\n世代 {test_epoch} 的最大步數: {max_steps}")
             
             # 讀取前 10 步的數據
-            data_range = data_reader.load_range_data(test_epoch, slice(0, 10))
+            data_range = data_reader.load_range_data(test_epoch, slice(0, 1))
             if data_range:
                 print("\n成功讀取數據範圍:")
                 for key, value in data_range.items():
                     print(f"{key} shape: {value.shape}")
-                print(data_range['layer_actor'][0])
