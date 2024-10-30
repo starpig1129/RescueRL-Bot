@@ -88,6 +88,8 @@ class CustomPolicy(ActorCriticPolicy):
         self.value_net = CustomCritic(self.features_extractor.features_dim)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
         self.action_logits = None
+        self.layer_outputs = None
+        
     def _build(self, lr_schedule) -> None:
         # Construct action and value networks using custom architectures
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
@@ -100,8 +102,9 @@ class CustomPolicy(ActorCriticPolicy):
         return self.value_net(features)
 
     def forward(self, obs, deterministic=False):
-        # Extract features using the custom ResNet extractor
+        # Extract features and store layer outputs
         features = self.extract_features(obs)
+        self.layer_outputs = self.features_extractor.layer_outputs
         
         # Get the action logits from the actor and the value from the critic
         self.action_logits = self.action_net(features)
@@ -118,6 +121,16 @@ class CustomPolicy(ActorCriticPolicy):
         # Compute log probabilities
         log_probs = action_dist.log_prob(actions)
         
+        # Create a deep copy of layer outputs before storing in environment
+        layer_outputs_copy = {
+            key: np.array(value, copy=True) 
+            for key, value in self.layer_outputs.items()
+        }
+        
+        # Store layer outputs in the environment
+        if hasattr(self.env, 'set_layer_outputs'):
+            self.env.set_layer_outputs(layer_outputs_copy)
+            
         return actions, value, log_probs
 
     def evaluate_actions(self, obs, actions):

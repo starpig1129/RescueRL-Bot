@@ -11,16 +11,19 @@ from CrawlerEnv import CrawlerEnv
 from DataHandler import DataHandler
 
 class TestPolicy:
-    def __init__(self, state_dim=(3, 224, 224), action_dim=9,features_dim=512):
-        # 初始化特徵提取器，保持與原始架構一致
+    def __init__(self, state_dim=(3, 224, 224), action_dim=9, features_dim=512):
+        # Initialize feature extractor
         self.features_extractor = PretrainedResNet(observation_space=None, features_dim=512)
         
-        # 動作網路
+        # Initialize actor network
         self.actor = CustomActor(features_dim, action_dim)
         
+        # Store the latest layer outputs
+        self.layer_outputs = None
+    
     def load_state_dict(self, state_dict):
         try:
-            # 載入特徵提取器的權重
+            # Load feature extractor weights
             extractor_dict = {}
             for k, v in state_dict.items():
                 if k.startswith('features_extractor.extractor.'):
@@ -28,10 +31,10 @@ class TestPolicy:
                     extractor_dict[new_key] = v
             
             if extractor_dict:
-                print("載入特徵提取器權重...")
+                print("Loading feature extractor weights...")
                 self.features_extractor.extractor.load_state_dict(extractor_dict)
             
-            # 載入 actor 網路的權重
+            # Load actor network weights
             actor_dict = {}
             for k, v in state_dict.items():
                 if k.startswith('action_net.'):
@@ -39,41 +42,70 @@ class TestPolicy:
                     actor_dict[new_key] = v
             
             if actor_dict:
-                print("載入 actor 網路權重...")
+                print("Loading actor network weights...")
                 self.actor.load_state_dict(actor_dict)
             
-            print("成功載入所有權重")
+            print("Successfully loaded all weights")
             
         except Exception as e:
-            print(f"載入權重時發生錯誤: {e}")
+            print(f"Error loading weights: {e}")
             print("State dict keys:", state_dict.keys())
             raise
-        
+    
     def to(self, device):
-        self.features_extractor.to(device)
-        self.actor.to(device)
+        self.features_extractor = self.features_extractor.to(device)
+        self.actor = self.actor.to(device)
         return self
-        
+    
     def eval(self):
         self.features_extractor.eval()
         self.actor.eval()
-        
+    
     def predict(self, observation, device):
         with torch.no_grad():
-            # 確保觀察值是tensor且在正確的設備上
+            # Ensure observation is a tensor on the correct device
             if not isinstance(observation, torch.Tensor):
                 observation = torch.tensor(observation, dtype=torch.float32)
             observation = observation.to(device)
             
             if observation.dim() == 3:
                 observation = observation.unsqueeze(0)
-                
-            # 使用特徵提取器
+            
+            # Extract features and store layer outputs
             features = self.features_extractor(observation)
-            # 通過動作網路
+            
+            # Get action logits
             action_logits = self.actor(features)
+            
+            self.layer_outputs = {
+                'input': self.features_extractor.layer_outputs['input'],
+                'conv1_output': self.features_extractor.layer_outputs['conv1_output'],
+                'layer4_output': self.features_extractor.layer_outputs['layer4_output'],
+                'features_output': self.features_extractor.layer_outputs['features_output'],
+                'actor_output': action_logits.detach().cpu().numpy()
+            }
+            
             action = torch.argmax(action_logits, dim=1)
             return action.item()
+
+def test_episode(env, policy, episode_num, device, render=False):
+    obs = env.reset()
+    done = False
+    total_reward = 0
+    steps = 0
+    
+    while not done:
+        action = policy.predict(obs, device)
+        # Update the environment's layer outputs
+        env.set_layer_outputs(policy.layer_outputs)
+        obs, reward, done, _ = env.step(action)
+        total_reward += reward
+        steps += 1
+        
+        if render:
+            env.render()
+            
+    return total_reward, steps
 
 def load_model_from_zip(model_path, device):
     """
@@ -113,23 +145,6 @@ def load_model_from_zip(model_path, device):
     except Exception as e:
         print(f"載入模型時發生錯誤: {e}")
         raise
-
-def test_episode(env, policy, episode_num, device, render=False):
-    obs = env.reset()
-    done = False
-    total_reward = 0
-    steps = 0
-    
-    while not done:
-        action = policy.predict(obs, device)
-        obs, reward, done, _ = env.step(action)
-        total_reward += reward
-        steps += 1
-        
-        if render:
-            env.render()
-            
-    return total_reward, steps
 
 def find_model_files(models_dir="models"):
     """找到所有模型檔案並按照世代排序"""

@@ -157,7 +157,7 @@ class DataHandler:
         self.current_max_steps = new_max_steps
 
     def save_step_data(self, step, obs, angle_degrees, reward, reward_list, 
-                      origin_image, results, layer_outputs=None):
+                      origin_image, results, layer_outputs):
         if step >= self.current_max_steps:
             self._resize_datasets()
 
@@ -300,29 +300,7 @@ class DataHandler:
             arr = np.pad(arr, padding, mode='constant')
             
         return arr
-    def _pad_or_trim_array(self, arr, target_shape):
-        """
-        填充或裁剪數組到目標形狀
-        """
-        arr = np.array(arr)  # 確保輸入是numpy數組
-        
-        # 如果是一維數組
-        if len(target_shape) == 1:
-            if len(arr) > target_shape[0]:
-                return arr[:target_shape[0]]
-            elif len(arr) < target_shape[0]:
-                padding = [(0, target_shape[0] - len(arr))]
-                return np.pad(arr, padding, mode='constant')
-            return arr
-            
-        # 如果是二維數組
-        if len(arr) > target_shape[0]:
-            arr = arr[:target_shape[0]]
-        elif len(arr) < target_shape[0]:
-            padding = [(0, target_shape[0] - len(arr)), (0, 0)]
-            arr = np.pad(arr, padding, mode='constant')
-            
-        return arr
+    
     def close_epoch_file(self):
         """
         關閉當前的epoch文件並清理資源

@@ -204,3 +204,4 @@ if __name__ == "__main__":
                 print("\n成功讀取數據範圍:")
                 for key, value in data_range.items():
                     print(f"{key} shape: {value.shape}")
+                print(data_range['layer_actor'][0])

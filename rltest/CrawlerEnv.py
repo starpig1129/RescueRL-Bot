@@ -28,7 +28,8 @@ class CrawlerEnv(gym.Env):
         self.angle_degrees = 90
         self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)
         self.reward_function = RewardFunction()
-
+        self.layer_outputs = None
+        
         # 初始化 socket 相關變量
         self.control_socket = None
         self.control_conn = None
@@ -205,7 +206,16 @@ class CrawlerEnv(gym.Env):
             done = self.reset_event.is_set()
 
             # 儲存每一代的每一步數據
-            self.data_handler.save_step_data(self.step_counter, obs, self.angle_degrees, reward, reward_list, origin_image, results)
+            self.data_handler.save_step_data(
+                self.step_counter, 
+                obs, 
+                self.angle_degrees, 
+                reward, 
+                reward_list, 
+                origin_image, 
+                results,
+                self.layer_outputs
+            )
             self.step_counter += 1
             
             # In step and reset methods
@@ -216,7 +226,13 @@ class CrawlerEnv(gym.Env):
         except Exception as e:
             print(f"步驟執行時發生錯誤: {e}")
             return None, 0, True, {}
+    def get_layer_outputs(self):
+        """Get the current layer outputs"""
+        return self.layer_outputs
 
+    def set_layer_outputs(self, outputs):
+        """Set the current layer outputs"""
+        self.layer_outputs = outputs
     def reset(self):
         if self.epoch > 0:
             self.data_handler.close_epoch_file()
