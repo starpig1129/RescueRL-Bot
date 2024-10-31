@@ -70,10 +70,11 @@ def main():
     if os.path.exists(model_path):
         print(f"發現之前的模型（世代 {current_epoch}），正在從檢查點加載...")
         model = PPO.load(model_path, env=env)  # 加載之前的模型，並繼續訓練
+        model.policy.env = env
     else:
         print("未找到之前的模型，從頭開始訓練...")
         model = PPO(**model_params)
-
+        model.policy.env = env
     total_timesteps = 1_000_000
     checkpoint_interval = model_params['n_steps']
     
@@ -81,6 +82,7 @@ def main():
     for i in range(int(total_timesteps / checkpoint_interval)):
         model.learn(total_timesteps=checkpoint_interval, reset_num_timesteps=False, tb_log_name="PPO")
         current_epoch += 1  # 更新當前世代數
+        model.policy.env = env
         model.save(f"models/ppo_crawler_ep{current_epoch:03d}")  # 保存以世代命名的模型
     
     print("訓練完成！")
