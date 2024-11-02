@@ -73,7 +73,7 @@ class CrawlerEnv(gym.Env):
             self.control_socket.bind(self.control_address)
             self.control_socket.listen(5)
             print('控制伺服器已啟動，等待連接...')
-            self.control_socket.settimeout(10)  # 設置超時
+            self.control_socket.settimeout(20)  # 設置超時
             self.control_conn, self.control_addr = self.control_socket.accept()
             self.control_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             print("已連接到控制伺服器:", self.control_addr)
