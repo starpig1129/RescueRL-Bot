@@ -26,7 +26,7 @@ class CrawlerEnv(gym.Env):
 
         self.magnitude = 5.0
         self.angle_degrees = 90
-        self.YoloModel = YOLO('yolo/best_1.pt', verbose=False)
+        self.YoloModel = YOLO('yolo/1103v11.pt', verbose=False)
         self.reward_function = RewardFunction()
         self.layer_outputs = None
         
