@@ -17,16 +17,18 @@ from torchvision import transforms
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 class CrawlerEnv(gym.Env):
-    def __init__(self, show, epoch=0, test_mode=False):
+    def __init__(self, show, epoch=0, test_mode=False, save_interval = 1):
         super(CrawlerEnv, self).__init__()
         self.show = show
         self.test_mode = test_mode
+        self.save_interval = save_interval  #設定儲存間隔
+        self.should_save = False  # 用於追蹤是否應該儲存當前epoch
         self.action_space = gym.spaces.Discrete(9)
         self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(3, 224, 224), dtype=np.float32)
 
         self.magnitude = 5.0
         self.angle_degrees = 90
-        self.YoloModel = YOLO('yolo/1103v11.pt', verbose=False)
+        self.YoloModel = YOLO('yolo/1105.pt', verbose=False)
         self.reward_function = RewardFunction()
         self.layer_outputs = None
         
@@ -206,22 +208,28 @@ class CrawlerEnv(gym.Env):
             done = self.reset_event.is_set()
 
             self.step_counter += 1
-            # 儲存每一代的每一步數據
-            self.data_handler.save_step_data(
-                self.step_counter, 
-                obs, 
-                self.angle_degrees, 
-                reward, 
-                reward_list, 
-                origin_image, 
-                results,
-                self.layer_outputs
-            )
             
-            # In step and reset methods
+            #根據儲存間隔決定是否儲存資料
+            if self.should_save:
+                self.data_handler.save_step_data(
+                    self.step_counter, 
+                    obs, 
+                    self.angle_degrees, 
+                    reward, 
+                    reward_list, 
+                    origin_image, 
+                    results,
+                    self.layer_outputs
+                )
+            
+            # 前處理觀察資料
             obs = self.preprocess_observation(obs)
                 
             return obs, reward, done, {}
+
+        except Exception as e:
+            print(f"步驟執行時發生錯誤: {e}")
+            return None, 0, True, {}
 
         except Exception as e:
             print(f"步驟執行時發生錯誤: {e}")
@@ -234,13 +242,21 @@ class CrawlerEnv(gym.Env):
         """Set the current layer outputs"""
         self.layer_outputs = outputs
     def reset(self):
-        if self.epoch > 0:
+        if self.epoch > 0 and self.should_save:
             self.data_handler.close_epoch_file()
 
         self.epoch += 1
         self.step_counter = 0
-        # 創建一個帶有當前 epoch 的 HDF5 檔案
-        self.data_handler.create_epoch_file(self.epoch)
+        
+        # 根據儲存間隔決定是否應該儲存這個epoch的資料
+        self.should_save = (self.epoch % self.save_interval) == 0
+        
+        # 只在需要儲存資料時創建新的HDF5檔案
+        if self.should_save:
+            self.data_handler.create_epoch_file(self.epoch)
+            print(f"將儲存第 {self.epoch} 個epoch的資料")
+        else:
+            print(f"跳過第 {self.epoch} 個epoch的資料儲存")
 
         # 等待重置訊號
         self.reset_event.wait()
@@ -314,7 +330,7 @@ class CrawlerEnv(gym.Env):
             if obs is not None:
                 # 使用 YOLO 模型進行推理 (使用 CUDA)
                 results = self.YoloModel(obs, imgsz=(640, 384), device='cuda:0',
-                                        conf=0.7, classes=[0], show_boxes=False)[0]
+                                        conf=0.75, classes=[0], show_boxes=False)[0]
                 try:
                     # 獲取 YOLO 模型的檢測框並確保範圍正確
                     x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
@@ -349,7 +365,7 @@ class CrawlerEnv(gym.Env):
 
             # 將位元組轉換為整數（大端序）
             length = int.from_bytes(length_bytes, byteorder='big', signed=True)
-            print(f"接收到的資料長度：{length} 位元組")
+            #print(f"接收到的資料長度：{length} 位元組")
             
             # 檢查資料長度是否在合理範圍內，避免無效或過大的資料長度
             if length <= 0 or length > 10**6:  # 假設資料長度限制為 1MB
@@ -362,7 +378,7 @@ class CrawlerEnv(gym.Env):
                 print("未接收到完整的資料")
                 return None
 
-            print(f"實際接收到的資料長度：{len(data_bytes)} 位元組")
+            #print(f"實際接收到的資料長度：{len(data_bytes)} 位元組")
             
             try:
                 # 解碼並解析 JSON 資料
