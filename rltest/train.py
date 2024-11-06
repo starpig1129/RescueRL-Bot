@@ -62,7 +62,7 @@ def get_latest_epoch(model_dir="models"):
 def main():
     global env, model, current_epoch
     current_epoch = get_latest_epoch()  # 初始化當前世代數
-    env = CrawlerEnv(show=False, epoch=current_epoch, test_mode=False)  # 傳入當前世代給環境
+    env = CrawlerEnv(show=False, epoch=current_epoch, test_mode=False, save_interval=10)  # 傳入當前世代給環境
     model_params['env'] = env  # 將環境傳遞給模型
 
     # 檢查是否有之前保存的模型
@@ -81,8 +81,8 @@ def main():
     # 訓練模型並保存檢查點
     for i in range(int(total_timesteps / checkpoint_interval)):
         model.learn(total_timesteps=checkpoint_interval, reset_num_timesteps=False, tb_log_name="PPO")
-        current_epoch += 1  # 更新當前世代數
         model.policy.env = env
+        current_epoch = model.policy.env.epoch
         model.save(f"models/ppo_crawler_ep{current_epoch:03d}")  # 保存以世代命名的模型
     
     print("訓練完成！")
