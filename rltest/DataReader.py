@@ -196,7 +196,7 @@ class DataReader:
 
 if __name__ == "__main__":
     # 使用範例
-    data_reader = DataReader(base_dir="test_logs")
+    data_reader = DataReader(base_dir="train_logs")
     
     # 獲取所有可用的世代
     epochs = data_reader.get_all_epochs()
@@ -204,7 +204,7 @@ if __name__ == "__main__":
     
     if epochs:
         # 選擇第一個世代進行測試
-        test_epoch = epochs[1]
+        test_epoch = epochs[0]
         
         # 獲取檔案信息
         file_info = data_reader.get_file_info(test_epoch)
@@ -227,7 +227,7 @@ if __name__ == "__main__":
             print(f"\n世代 {test_epoch} 的最大步數: {max_steps}")
             
             # 讀取前20步的數據
-            data_range = data_reader.load_range_data(test_epoch, slice(0, 20))
+            data_range = data_reader.load_range_data(test_epoch, slice(0, 3000))
             if data_range:
                 print("\n成功讀取數據範圍:")
                 for key, value in data_range.items():

@@ -224,7 +224,7 @@ class CrawlerEnv(gym.Env):
             
             # 前處理觀察資料
             obs = self.preprocess_observation(obs)
-                
+            print(f'step{self.step_counter}:reward={reward}')    
             return obs, reward, done, {}
 
         except Exception as e:

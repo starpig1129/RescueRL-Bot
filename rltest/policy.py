@@ -145,7 +145,6 @@ class CustomPolicy(ActorCriticPolicy):
         env = self._get_env()
         if env is not None and hasattr(env, 'set_layer_outputs'):
             env.set_layer_outputs(layer_outputs)
-            print('儲存成功')
         return actions, value, log_probs
 
     def evaluate_actions(self, obs, actions):
