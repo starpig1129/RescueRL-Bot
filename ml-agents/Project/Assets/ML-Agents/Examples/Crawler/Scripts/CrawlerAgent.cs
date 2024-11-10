@@ -72,6 +72,13 @@ public class CrawlerAgent : Agent
     public Material groundedMaterial;
     public Material unGroundedMaterial;
 
+    private float continuousUpsideDownTimer = 0f;  // 持續翻倒的計時器
+    private float currentUpsideDownDuration = 0f;  // 當前翻倒持續時間
+    private const float CONTINUOUS_UPSIDE_DOWN_THRESHOLD = 3f;  // 需要持續翻倒2秒才開始計時
+    private const float UPSIDE_DOWN_TIMEOUT = 3f;  // 持續翻倒5秒後重置
+    private const float UPSIDE_DOWN_ANGLE_THRESHOLD = 60f;  // 超過60度視為翻倒
+    private bool isCountingForReset = false;  // 是否開始重置計時
+
     public override void Initialize()
     {
         SpawnTarget(TargetPrefab, transform.position);
@@ -92,6 +99,45 @@ public class CrawlerAgent : Agent
         m_JdController.SetupBodyPart(leg3Lower);
 
         resetSignal = BitConverter.GetBytes(1);
+    }
+    private void CheckUpsideDown()
+    {
+        // 檢查身體的上方向量與世界上方向量的夾角
+        float angle = Vector3.Angle(body.up, Vector3.up);
+
+        // 如果角度超過閾值，視為翻倒
+        if (angle > UPSIDE_DOWN_ANGLE_THRESHOLD)
+        {
+            currentUpsideDownDuration += Time.deltaTime;
+
+            // 如果持續翻倒時間超過閾值，開始計算重置時間
+            if (currentUpsideDownDuration >= CONTINUOUS_UPSIDE_DOWN_THRESHOLD && !isCountingForReset)
+            {
+                isCountingForReset = true;
+                continuousUpsideDownTimer = 0f;
+                Debug.Log("Crawler has been continuously upside down. Starting reset timer...");
+            }
+
+            // 如果已經開始計算重置時間
+            if (isCountingForReset)
+            {
+                continuousUpsideDownTimer += Time.deltaTime;
+
+                // 如果重置計時超過timeout，結束回合
+                if (continuousUpsideDownTimer >= UPSIDE_DOWN_TIMEOUT)
+                {
+                    Debug.Log("Crawler has failed to recover. Resetting episode...");
+                    EndEpisode();
+                }
+            }
+        }
+        else
+        {
+            // 如果角度恢復正常，重置所有計時器和狀態
+            currentUpsideDownDuration = 0f;
+            continuousUpsideDownTimer = 0f;
+            isCountingForReset = false;
+        }
     }
     private void SendResetSignal()
     {
@@ -126,6 +172,11 @@ public class CrawlerAgent : Agent
     /// </summary>
     public override void OnEpisodeBegin()
     {
+        // 重置翻倒相關狀態
+        currentUpsideDownDuration = 0f;
+        continuousUpsideDownTimer = 0f;
+        isCountingForReset = false;
+
         foreach (var bodyPart in m_JdController.bodyPartsDict.Values)
         {
             bodyPart.Reset(bodyPart);
@@ -236,7 +287,8 @@ public class CrawlerAgent : Agent
     void FixedUpdate()
     {
         UpdateOrientationObjects();
-
+        // 檢查是否翻倒
+        CheckUpsideDown();
         // 如果啟用，當腳接地時，腳會亮起綠色。
         // 這只是一種視覺化，並不是必須的功能
         if (useFootGroundedVisualization)
@@ -265,6 +317,18 @@ public class CrawlerAgent : Agent
         // b. 旋轉對齊目標方向。
         // 如果完美面對目標方向，此獎勵將接近1，偏差時接近0
         var lookAtTargetReward = (Vector3.Dot(cubeForward, body.forward) + 1) * .5F;
+
+        // 根據翻倒狀態給予獎勵或懲罰
+        if (currentUpsideDownDuration > 0)
+        {
+            // 翻倒時給予小額負面獎勵
+            AddReward(-0.05f * Time.fixedDeltaTime);
+        }
+        if (isCountingForReset)
+        {
+            // 進入重置計時後給予更大的負面獎勵
+            AddReward(-0.2f * Time.fixedDeltaTime);
+        }
 
         AddReward(matchSpeedReward * lookAtTargetReward);
     }
