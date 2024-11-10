@@ -5,72 +5,44 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import models
 
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        if stride != 1 or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
-
-    def forward(self, x):
-        residual = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out += self.shortcut(residual)
-        out = self.relu(out)
-        return out
-
-class CustomResNet(BaseFeaturesExtractor):
+class PretrainedResNet(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
-        super(CustomResNet, self).__init__(observation_space, features_dim)
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-
-        self.layer1 = self._make_layer(64, 64, stride=1)
-        self.layer2 = self._make_layer(64, 128, stride=2)
-        self.layer3 = self._make_layer(128, 256, stride=2)
-        self.layer4 = self._make_layer(256, 512, stride=2)
-
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512, features_dim)
-
-    def _make_layer(self, in_channels, out_channels, stride):
-        return nn.Sequential(
-            ResidualBlock(in_channels, out_channels, stride),
-            ResidualBlock(out_channels, out_channels)
-        )
-
+        super(PretrainedResNet, self).__init__(observation_space, features_dim)
+        
+        # Initialize pretrained ResNet model
+        resnet = models.resnet18(pretrained=True)
+        num_features = resnet.fc.in_features
+        resnet.fc = nn.Identity()
+        
+        self.extractor = resnet
+        self._features_dim = num_features
+        
+        # Initialize dictionary for storing layer outputs
+        self.layer_outputs = {}
+        
+        # Register forward hooks
+        self.extractor.conv1.register_forward_hook(self.get_activation('conv1_output'))
+        self.extractor.layer4.register_forward_hook(self.get_activation('final_residual_output'))
+    
+    def get_activation(self, name):
+        def hook(model, input, output):
+            self.layer_outputs[name] = output.detach().cpu().numpy()
+        return hook
+    
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        x = self.conv1(observations)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
+        # Store input
+        self.layer_outputs['input'] = observations.detach().cpu().numpy()
+        
+        # Pass through feature extractor
+        features = self.extractor(observations)
+        
+        # Store final features output
+        self.layer_outputs['features_output'] = features.detach().cpu().numpy()
+        
+        return features
 
 class CustomActor(nn.Module):
     def __init__(self, features_dim, action_dim):
@@ -78,11 +50,12 @@ class CustomActor(nn.Module):
         self.fc1 = nn.Linear(features_dim, 256)
         self.fc2 = nn.Linear(256, 128)
         self.fc3 = nn.Linear(128, action_dim)
+        self.dropout = nn.Dropout(0.5) 
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.dropout(F.relu(self.fc1(x)))  
+        x = self.dropout(F.relu(self.fc2(x)))
+        x = self.fc3(x) 
         return x
 
 class CustomCritic(nn.Module):
@@ -91,66 +64,95 @@ class CustomCritic(nn.Module):
         self.fc1 = nn.Linear(features_dim, 256)
         self.fc2 = nn.Linear(256, 128)
         self.fc3 = nn.Linear(128, 1)
+        self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.dropout(F.relu(self.fc1(x)))
+        x = self.dropout(F.relu(self.fc2(x)))
+        x = self.fc3(x)  
         return x
 
-# Custom policy class overriding the ActorCriticPolicy
 class CustomPolicy(ActorCriticPolicy):
     def __init__(self, observation_space, action_space, lr_schedule, *args, **kwargs):
-        super(CustomPolicy, self).__init__(observation_space, action_space, lr_schedule,
-                                           *args, **kwargs, 
-                                           features_extractor_class=CustomResNet,
-                                           features_extractor_kwargs={'features_dim': 512})
+        super(CustomPolicy, self).__init__(
+            observation_space, 
+            action_space, 
+            lr_schedule,
+            *args, 
+            **kwargs, 
+            features_extractor_class=PretrainedResNet,
+            features_extractor_kwargs={'features_dim': 512}
+        )
 
-        # Custom Actor-Critic network
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
+        self.action_logits = None
+        self.layer_outputs = None
         
+    def _get_env(self):
+        """改进的环境引用获取方法"""
+        # 方法1：通过 self 查找
+        if hasattr(self, 'env'):
+            return self.env
+            
+        # 方法2：通过 policy_parent (PPO实例) 查找
+        if hasattr(self, 'policy_parent'):
+            if hasattr(self.policy_parent, 'env'):
+                return self.policy_parent.env
+            # 对于vec_env的情况
+            if hasattr(self.policy_parent, 'venv'):
+                return self.policy_parent.venv.envs[0]
+
     def _build(self, lr_schedule) -> None:
-        # Construct action and value networks using custom architectures
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
 
     def predict_values(self, obs):
-        # 提取特徵
         features = self.extract_features(obs)
-        # 使用自訂的 value_net 來預測價值函數
         return self.value_net(features)
 
     def forward(self, obs, deterministic=False):
-        # Extract features using the custom ResNet extractor
+        # Extract features and store layer outputs
         features = self.extract_features(obs)
+        self.layer_outputs = self.features_extractor.layer_outputs
         
-        # Get the action logits from the actor and the value from the critic
-        action_logits = self.action_net(features)
+        # Get the action logits and value
+        self.action_logits = self.action_net(features)
         value = self.value_net(features)
         
-        # Create a distribution for the action (Categorical for discrete actions)
-        action_dist = torch.distributions.Categorical(logits=action_logits)
+        # Create action distribution
+        action_dist = torch.distributions.Categorical(logits=self.action_logits)
         
         if deterministic:
-            actions = torch.argmax(action_logits, dim=1)
+            actions = torch.argmax(self.action_logits, dim=1)
         else:
             actions = action_dist.sample()
         
         # Compute log probabilities
         log_probs = action_dist.log_prob(actions)
         
+        # Collect all layer outputs
+        layer_outputs = {
+            'input': self.features_extractor.layer_outputs['input'],
+            'conv1_output': self.features_extractor.layer_outputs['conv1_output'],
+            'final_residual_output': self.features_extractor.layer_outputs['final_residual_output'],
+            'features_output': self.features_extractor.layer_outputs['features_output'],
+            'actor_output': self.action_logits.detach().cpu().numpy()
+        }
+        
+        # Get environment reference and set layer outputs if available
+        env = self._get_env()
+        if env is not None and hasattr(env, 'set_layer_outputs'):
+            env.set_layer_outputs(layer_outputs)
         return actions, value, log_probs
 
     def evaluate_actions(self, obs, actions):
-        # Extract features and process through the actor-critic networks
         features = self.extract_features(obs)
         
         action_logits = self.action_net(features)
         value = self.value_net(features)
         
-        # Create a distribution for the action (Categorical for discrete actions)
         action_dist = torch.distributions.Categorical(logits=action_logits)
         
         log_prob = action_dist.log_prob(actions)
