@@ -79,6 +79,9 @@ public class CrawlerAgent : Agent
     private const float UPSIDE_DOWN_ANGLE_THRESHOLD = 60f;  // 超過60度視為翻倒
     private bool isCountingForReset = false;  // 是否開始重置計時
 
+    private const int MAX_RETRY_ATTEMPTS = 3;
+    private const int RETRY_DELAY_MS = 100;
+    private int currentEpoch = 0;
     public override void Initialize()
     {
         SpawnTarget(TargetPrefab, transform.position);
@@ -141,17 +144,57 @@ public class CrawlerAgent : Agent
     }
     private void SendResetSignal()
     {
-        try
+        int attempts = 0;
+        bool signalSent = false;
+
+        while (!signalSent && attempts < MAX_RETRY_ATTEMPTS)
         {
-            using (Socket resetSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+            try
             {
-                resetSocket.Connect(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 7000));
-                resetSocket.Send(resetSignal);
+                using (Socket resetSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+                {
+                    resetSocket.Connect(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 7000));
+
+                    // 發送重置信號
+                    resetSocket.Send(resetSignal);
+
+                    // 等待接收Python端的epoch
+                    byte[] epochBuffer = new byte[4];
+                    int bytesRead = resetSocket.Receive(epochBuffer);
+
+                    if (bytesRead == 4)
+                    {
+                        int pythonEpoch = BitConverter.ToInt32(epochBuffer, 0);
+
+                        // 更新Unity端的epoch以匹配Python
+                        if (currentEpoch != pythonEpoch)
+                        {
+                            Debug.Log($"同步Unity epoch從 {currentEpoch} 到 Python epoch {pythonEpoch}");
+                            currentEpoch = pythonEpoch;
+                        }
+
+                        signalSent = true;
+                        Debug.Log($"Reset signal sent and received Python epoch: {currentEpoch}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning("未收到完整的epoch數據");
+                    }
+                }
             }
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"Error sending reset signal: {e.Message}");
+            catch (Exception e)
+            {
+                attempts++;
+                if (attempts >= MAX_RETRY_ATTEMPTS)
+                {
+                    Debug.LogError($"Failed to send reset signal after {MAX_RETRY_ATTEMPTS} attempts: {e.Message}");
+                }
+                else
+                {
+                    Debug.LogWarning($"Retry {attempts} to send reset signal: {e.Message}");
+                    System.Threading.Thread.Sleep(RETRY_DELAY_MS);
+                }
+            }
         }
     }
     /// <summary>
@@ -181,25 +224,27 @@ public class CrawlerAgent : Agent
         {
             bodyPart.Reset(bodyPart);
         }
-        // 调试信息，检查 objectManager 是否为空
+
+        // 檢查 objectManager
         if (objectManager == null)
         {
-            UnityEngine.Debug.LogError("objectManager is null!");
+            Debug.LogError("objectManager is null!");
         }
         else
         {
             TargetController.num = 0;
             objectManager.InitializeObjects();
         }
+
         // 隨機開始旋轉以幫助泛化
         body.rotation = Quaternion.Euler(0, Random.Range(0.0f, 360.0f), 0);
 
         UpdateOrientationObjects();
 
-        // 設定我們的目標步行速度
+        // 設定目標步行速度
         TargetWalkingSpeed = Random.Range(0.1f, m_maxWalkingSpeed);
 
-        // 發送重製訊號到Python
+        // 發送重置信號並同步epoch
         SendResetSignal();
     }
 

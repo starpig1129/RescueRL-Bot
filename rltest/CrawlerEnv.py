@@ -2,6 +2,8 @@ import gym
 import numpy as np
 import cv2
 import torch
+import os
+os.environ['YOLO_VERBOSE'] = 'False'
 from ultralytics import YOLO
 import socket
 import struct
@@ -144,22 +146,34 @@ class CrawlerEnv(gym.Env):
         """處理重置連接的線程函數"""
         while not self.reset_thread_stop.is_set():
             try:
-                print('連線重置訊號發送端中')
-                self.reset_socket.settimeout(1)  # 短暫的超時，以便能夠檢查停止標誌
+                #print('等待連接重置訊號發送端...')
+                self.reset_socket.settimeout(1)
                 reset_conn, reset_addr = self.reset_socket.accept()
                 print("已連接到重置訊號發送端:", reset_addr)
                 
                 while not self.reset_thread_stop.is_set():
                     try:
-                        data = reset_conn.recv(4)
-                        if not data:
+                        # 接收Unity發來的重置信號
+                        signal_data = reset_conn.recv(4)
+                        if not signal_data:
                             break
-                        signal = int.from_bytes(data, byteorder='little')
+                        signal = int.from_bytes(signal_data, byteorder='little')
+                        
                         if signal == 1:
+                            # 發送當前Python的epoch回Unity
+                            epoch_data = self.epoch.to_bytes(4, byteorder='little')
+                            try:
+                                reset_conn.send(epoch_data)
+                                print(f"向Unity發送當前epoch: {self.epoch}")
+                            except Exception as e:
+                                print(f"發送epoch到Unity時發生錯誤: {e}")
+                            
                             self.reset_event.set()
+                            print(f"收到重置信號，當前epoch: {self.epoch}")
                     except socket.timeout:
                         continue
-                    except Exception:
+                    except Exception as e:
+                        print(f"接收重置信號時發生錯誤: {e}")
                         break
                         
                 reset_conn.close()
@@ -224,7 +238,7 @@ class CrawlerEnv(gym.Env):
             
             # 前處理觀察資料
             obs = self.preprocess_observation(obs)
-            print(f'step{self.step_counter}:reward={reward}')    
+            #print(f'step{self.step_counter}:reward={reward}')    
             return obs, reward, done, {}
 
         except Exception as e:
@@ -330,7 +344,7 @@ class CrawlerEnv(gym.Env):
             if obs is not None:
                 # 使用 YOLO 模型進行推理 (使用 CUDA)
                 results = self.YoloModel(obs, imgsz=(640, 384), device='cuda:0',
-                                        conf=0.75, classes=[0], show_boxes=False)[0]
+                                        conf=0.75, classes=[0], show_boxes=False, show=False)[0]
                 try:
                     # 獲取 YOLO 模型的檢測框並確保範圍正確
                     x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
