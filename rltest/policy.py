@@ -9,42 +9,59 @@ import torch.nn.functional as F
 from torchvision import models
 
 class PretrainedResNet(BaseFeaturesExtractor):
+    """
+    預訓練的 ResNet 特徵提取器
+    使用 ResNet18 作為基礎模型，移除最後的全連接層，用於提取圖像特徵
+    """
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
         super(PretrainedResNet, self).__init__(observation_space, features_dim)
         
-        # Initialize pretrained ResNet model
+        # 初始化預訓練的 ResNet 模型
         resnet = models.resnet18(pretrained=True)
         num_features = resnet.fc.in_features
+        # 移除原始的全連接層，替換為恆等映射
         resnet.fc = nn.Identity()
         
         self.extractor = resnet
         self._features_dim = num_features
         
-        # Initialize dictionary for storing layer outputs
+        # 初始化用於存儲層輸出的字典
         self.layer_outputs = {}
         
-        # Register forward hooks
+        # 註冊前向傳播鉤子，用於捕獲中間層的輸出
         self.extractor.conv1.register_forward_hook(self.get_activation('conv1_output'))
         self.extractor.layer4.register_forward_hook(self.get_activation('final_residual_output'))
     
     def get_activation(self, name):
+        """
+        創建一個鉤子函數來捕獲並存儲指定層的輸出
+        """
         def hook(model, input, output):
             self.layer_outputs[name] = output.detach().cpu().numpy()
         return hook
     
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        # Store input
+        """
+        前向傳播函數
+        儲存輸入和所有中間層的輸出用於可視化
+        """
+        # 儲存輸入
         self.layer_outputs['input'] = observations.detach().cpu().numpy()
         
-        # Pass through feature extractor
+        # 通過特徵提取器
         features = self.extractor(observations)
         
-        # Store final features output
+        # 儲存最終特徵輸出
         self.layer_outputs['features_output'] = features.detach().cpu().numpy()
         
         return features
 
 class CustomActor(nn.Module):
+    """
+    自定義演員網絡
+    用於根據提取的特徵決定行動
+    包含三個全連接層和 dropout 層以防止過擬合
+    """
     def __init__(self, features_dim, action_dim):
         super(CustomActor, self).__init__()
         self.fc1 = nn.Linear(features_dim, 256)
@@ -59,6 +76,11 @@ class CustomActor(nn.Module):
         return x
 
 class CustomCritic(nn.Module):
+    """
+    自定義評論家網絡
+    用於評估當前狀態的價值
+    架構與演員網絡類似，但輸出為單一值
+    """
     def __init__(self, features_dim):
         super(CustomCritic, self).__init__()
         self.fc1 = nn.Linear(features_dim, 256)
@@ -73,6 +95,11 @@ class CustomCritic(nn.Module):
         return x
 
 class CustomPolicy(ActorCriticPolicy):
+    """
+    自定義策略類
+    整合特徵提取器、演員網絡和評論家網絡
+    實現完整的策略網絡功能
+    """
     def __init__(self, observation_space, action_space, lr_schedule, *args, **kwargs):
         super(CustomPolicy, self).__init__(
             observation_space, 
@@ -84,55 +111,70 @@ class CustomPolicy(ActorCriticPolicy):
             features_extractor_kwargs={'features_dim': 512}
         )
 
+        # 初始化網絡組件
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
         self.action_logits = None
         self.layer_outputs = None
-        
+    
     def _get_env(self):
-        """改进的环境引用获取方法"""
-        # 方法1：通过 self 查找
+        """
+        獲取環境引用的改進方法
+        支援多種環境配置方式
+        """
+        # 方法1：通過 self 查找
         if hasattr(self, 'env'):
             return self.env
             
-        # 方法2：通过 policy_parent (PPO实例) 查找
+        # 方法2：通過 policy_parent (PPO實例) 查找
         if hasattr(self, 'policy_parent'):
             if hasattr(self.policy_parent, 'env'):
                 return self.policy_parent.env
-            # 对于vec_env的情况
+            # 對於向量化環境的情況
             if hasattr(self.policy_parent, 'venv'):
                 return self.policy_parent.venv.envs[0]
 
     def _build(self, lr_schedule) -> None:
+        """
+        建構網絡組件
+        """
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
 
     def predict_values(self, obs):
+        """
+        預測給定觀察的價值
+        """
         features = self.extract_features(obs)
         return self.value_net(features)
 
     def forward(self, obs, deterministic=False):
-        # Extract features and store layer outputs
+        """
+        前向傳播函數
+        處理觀察並生成行動、價值和對數概率
+        """
+        # 提取特徵並儲存層輸出
         features = self.extract_features(obs)
         self.layer_outputs = self.features_extractor.layer_outputs
         
-        # Get the action logits and value
+        # 獲取行動邏輯值和狀態價值
         self.action_logits = self.action_net(features)
         value = self.value_net(features)
         
-        # Create action distribution
+        # 創建行動分佈
         action_dist = torch.distributions.Categorical(logits=self.action_logits)
         
+        # 根據是否確定性選擇行動
         if deterministic:
             actions = torch.argmax(self.action_logits, dim=1)
         else:
             actions = action_dist.sample()
         
-        # Compute log probabilities
+        # 計算對數概率
         log_probs = action_dist.log_prob(actions)
         
-        # Collect all layer outputs
+        # 收集所有層輸出用於可視化
         layer_outputs = {
             'input': self.features_extractor.layer_outputs['input'],
             'conv1_output': self.features_extractor.layer_outputs['conv1_output'],
@@ -141,13 +183,17 @@ class CustomPolicy(ActorCriticPolicy):
             'actor_output': self.action_logits.detach().cpu().numpy()
         }
         
-        # Get environment reference and set layer outputs if available
+        # 更新環境中的層輸出
         env = self._get_env()
         if env is not None and hasattr(env, 'set_layer_outputs'):
             env.set_layer_outputs(layer_outputs)
         return actions, value, log_probs
 
     def evaluate_actions(self, obs, actions):
+        """
+        評估給定觀察和行動的價值
+        返回對數概率、熵和價值
+        """
         features = self.extract_features(obs)
         
         action_logits = self.action_net(features)
