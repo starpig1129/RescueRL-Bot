@@ -72,6 +72,16 @@ public class CrawlerAgent : Agent
     public Material groundedMaterial;
     public Material unGroundedMaterial;
 
+    private float continuousUpsideDownTimer = 0f;  // 持續翻倒的計時器
+    private float currentUpsideDownDuration = 0f;  // 當前翻倒持續時間
+    private const float CONTINUOUS_UPSIDE_DOWN_THRESHOLD = 3f;  // 需要持續翻倒2秒才開始計時
+    private const float UPSIDE_DOWN_TIMEOUT = 3f;  // 持續翻倒5秒後重置
+    private const float UPSIDE_DOWN_ANGLE_THRESHOLD = 60f;  // 超過60度視為翻倒
+    private bool isCountingForReset = false;  // 是否開始重置計時
+
+    private const int MAX_RETRY_ATTEMPTS = 3;
+    private const int RETRY_DELAY_MS = 100;
+    private int currentEpoch = 0;
     public override void Initialize()
     {
         SpawnTarget(TargetPrefab, transform.position);
@@ -93,19 +103,98 @@ public class CrawlerAgent : Agent
 
         resetSignal = BitConverter.GetBytes(1);
     }
-    private void SendResetSignal()
+    private void CheckUpsideDown()
     {
-        try
+        // 檢查身體的上方向量與世界上方向量的夾角
+        float angle = Vector3.Angle(body.up, Vector3.up);
+
+        // 如果角度超過閾值，視為翻倒
+        if (angle > UPSIDE_DOWN_ANGLE_THRESHOLD)
         {
-            using (Socket resetSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+            currentUpsideDownDuration += Time.deltaTime;
+
+            // 如果持續翻倒時間超過閾值，開始計算重置時間
+            if (currentUpsideDownDuration >= CONTINUOUS_UPSIDE_DOWN_THRESHOLD && !isCountingForReset)
             {
-                resetSocket.Connect(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 7000));
-                resetSocket.Send(resetSignal);
+                isCountingForReset = true;
+                continuousUpsideDownTimer = 0f;
+                Debug.Log("Crawler has been continuously upside down. Starting reset timer...");
+            }
+
+            // 如果已經開始計算重置時間
+            if (isCountingForReset)
+            {
+                continuousUpsideDownTimer += Time.deltaTime;
+
+                // 如果重置計時超過timeout，結束回合
+                if (continuousUpsideDownTimer >= UPSIDE_DOWN_TIMEOUT)
+                {
+                    Debug.Log("Crawler has failed to recover. Resetting episode...");
+                    EndEpisode();
+                }
             }
         }
-        catch (Exception e)
+        else
         {
-            Debug.LogError($"Error sending reset signal: {e.Message}");
+            // 如果角度恢復正常，重置所有計時器和狀態
+            currentUpsideDownDuration = 0f;
+            continuousUpsideDownTimer = 0f;
+            isCountingForReset = false;
+        }
+    }
+    private void SendResetSignal()
+    {
+        int attempts = 0;
+        bool signalSent = false;
+
+        while (!signalSent && attempts < MAX_RETRY_ATTEMPTS)
+        {
+            try
+            {
+                using (Socket resetSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+                {
+                    resetSocket.Connect(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 7000));
+
+                    // 發送重置信號
+                    resetSocket.Send(resetSignal);
+
+                    // 等待接收Python端的epoch
+                    byte[] epochBuffer = new byte[4];
+                    int bytesRead = resetSocket.Receive(epochBuffer);
+
+                    if (bytesRead == 4)
+                    {
+                        int pythonEpoch = BitConverter.ToInt32(epochBuffer, 0);
+
+                        // 更新Unity端的epoch以匹配Python
+                        if (currentEpoch != pythonEpoch)
+                        {
+                            Debug.Log($"同步Unity epoch從 {currentEpoch} 到 Python epoch {pythonEpoch}");
+                            currentEpoch = pythonEpoch;
+                        }
+
+                        signalSent = true;
+                        Debug.Log($"Reset signal sent and received Python epoch: {currentEpoch}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning("未收到完整的epoch數據");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                attempts++;
+                if (attempts >= MAX_RETRY_ATTEMPTS)
+                {
+                    Debug.LogError($"Failed to send reset signal after {MAX_RETRY_ATTEMPTS} attempts: {e.Message}");
+                }
+                else
+                {
+                    Debug.LogWarning($"Retry {attempts} to send reset signal: {e.Message}");
+                    System.Threading.Thread.Sleep(RETRY_DELAY_MS);
+                }
+            }
         }
     }
     /// <summary>
@@ -126,29 +215,36 @@ public class CrawlerAgent : Agent
     /// </summary>
     public override void OnEpisodeBegin()
     {
+        // 重置翻倒相關狀態
+        currentUpsideDownDuration = 0f;
+        continuousUpsideDownTimer = 0f;
+        isCountingForReset = false;
+
         foreach (var bodyPart in m_JdController.bodyPartsDict.Values)
         {
             bodyPart.Reset(bodyPart);
         }
-        // 调试信息，检查 objectManager 是否为空
+
+        // 檢查 objectManager
         if (objectManager == null)
         {
-            UnityEngine.Debug.LogError("objectManager is null!");
+            Debug.LogError("objectManager is null!");
         }
         else
         {
             TargetController.num = 0;
             objectManager.InitializeObjects();
         }
+
         // 隨機開始旋轉以幫助泛化
         body.rotation = Quaternion.Euler(0, Random.Range(0.0f, 360.0f), 0);
 
         UpdateOrientationObjects();
 
-        // 設定我們的目標步行速度
+        // 設定目標步行速度
         TargetWalkingSpeed = Random.Range(0.1f, m_maxWalkingSpeed);
 
-        // 發送重製訊號到Python
+        // 發送重置信號並同步epoch
         SendResetSignal();
     }
 
@@ -236,7 +332,8 @@ public class CrawlerAgent : Agent
     void FixedUpdate()
     {
         UpdateOrientationObjects();
-
+        // 檢查是否翻倒
+        CheckUpsideDown();
         // 如果啟用，當腳接地時，腳會亮起綠色。
         // 這只是一種視覺化，並不是必須的功能
         if (useFootGroundedVisualization)
@@ -265,6 +362,18 @@ public class CrawlerAgent : Agent
         // b. 旋轉對齊目標方向。
         // 如果完美面對目標方向，此獎勵將接近1，偏差時接近0
         var lookAtTargetReward = (Vector3.Dot(cubeForward, body.forward) + 1) * .5F;
+
+        // 根據翻倒狀態給予獎勵或懲罰
+        if (currentUpsideDownDuration > 0)
+        {
+            // 翻倒時給予小額負面獎勵
+            AddReward(-0.05f * Time.fixedDeltaTime);
+        }
+        if (isCountingForReset)
+        {
+            // 進入重置計時後給予更大的負面獎勵
+            AddReward(-0.2f * Time.fixedDeltaTime);
+        }
 
         AddReward(matchSpeedReward * lookAtTargetReward);
     }
