@@ -75,9 +75,17 @@ class CrawlerEnv(gym.Env):
         # 資料處理相關設置
         base_dir = "test_logs" if test_mode else "train_logs"
         self.logger = TrainLog()
-        self.data_handler = DataHandler(base_dir=base_dir,logger=self.logger)
+        self.data_handler = DataHandler(
+            base_dir=base_dir,
+            logger=self.logger,
+            feature_save_interval=10
+        )
         self.epoch = epoch
         self.step_count = 0
+        
+        # 確保首次創建文件時也初始化統計信息
+        if self.epoch == 0:
+            self.data_handler.create_epoch_file(self.epoch)
         
         # 重置事件相關設置
         self.reset_event = threading.Event()
