@@ -18,7 +18,7 @@ class EnhancedEpisodeCallback(BaseCallback):
         self.episode_rewards = []
         self.recent_rewards = []
         self.n_calls = 0
-        self.update_interval = 10  # 每10步更新一次顯示
+        self.update_interval = 5  # 每5步更新一次顯示
         self.last_update_time = time.time()
         self.last_step = 0
     def _on_step(self) -> bool:
