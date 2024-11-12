@@ -47,6 +47,7 @@ class CrawlerEnv(gym.Env):
         self.should_save = False  # 是否儲存當前 epoch 的資料
         self.last_reward_list = None
         self.last_update_time = time.time()
+        self.step_count = 0
         self.fps_counter = 0
         self.fps = 0
         
