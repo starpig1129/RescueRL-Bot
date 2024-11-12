@@ -8,5 +8,6 @@ rltest/logs
 *.zip
 output_chunks
 error_logs
+info_logs
 DataSplit.py
 DataDecompress.py
