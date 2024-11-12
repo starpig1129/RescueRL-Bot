@@ -13,7 +13,7 @@ import threading
 import signal
 import sys
 import time
-from rltest.reward.Reward import RewardFunction
+from reward.Reward import RewardFunction
 from DataHandler import DataHandler
 from torchvision import transforms 
 
@@ -60,7 +60,7 @@ class CrawlerEnv(gym.Env):
         self.angle_degrees = 90     # 初始角度
         
         # 模型與獎勵函數初始化
-        self.YoloModel = YOLO('yolo/1105.pt', verbose=False)  # YOLO 物件偵測模型
+        self.YoloModel = YOLO('yolo/1110_skew.pt', verbose=False)  # YOLO 物件偵測模型
         self.reward_function = RewardFunction()               # 獎勵計算器
         self.layer_outputs = None                            # 神經網路層輸出暫存
         
