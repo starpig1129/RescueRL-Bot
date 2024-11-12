@@ -7,5 +7,6 @@ rltest/logs
 *.h5
 *.zip
 output_chunks
+error_logs
 DataSplit.py
 DataDecompress.py

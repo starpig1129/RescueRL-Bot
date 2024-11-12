@@ -1,66 +1,113 @@
 import os
 import signal
 import sys
+import torch
+import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from CrawlerEnv import CrawlerEnv
 from policy import CustomPolicy
+from logger import TrainLog
 
-class EpisodeCallback(BaseCallback):
+class EnhancedEpisodeCallback(BaseCallback):
     """
-    回調類：用於在訓練過程中監控和保存模型
-    
-    功能：
-    - 追踪訓練的epoch
-    - 在特定間隔保存模型檢查點
-    - 提供訓練進度的日誌記錄
+    增強版回調類：用於監控訓練過程並更新日誌
     """
-    def __init__(self, save_freq=1, verbose=1):
-        super(EpisodeCallback, self).__init__(verbose)
-        self.save_freq = save_freq          # 保存模型的頻率（每N個epoch）
-        self.last_epoch = 0                 # 記錄上一個處理的epoch
+    def __init__(self, train_logger, save_freq=1, verbose=1):
+        super(EnhancedEpisodeCallback, self).__init__(verbose)
+        self.save_freq = save_freq          
+        self.last_epoch = 0                 
+        self._logger = train_logger         
+        self.episode_rewards = []           
+        self.recent_rewards = []            # 用於計算移動平均
+        self.n_calls = 0                    
         
     def _on_step(self) -> bool:
-        # 從訓練環境獲取當前epoch
-        current_epoch = self.training_env.get_attr('epoch')[0]
+        """每一步更新訓練狀態"""
+        self.n_calls += 1
         
-        # 當進入新的epoch時執行保存檢查
-        if current_epoch != self.last_epoch:
-            print(f"\n新回合開始: Epoch {current_epoch}")
+        try:
+            # 從訓練環境獲取當前資訊
+            current_epoch = self.training_env.get_attr('epoch')[0]
+            current_step = self.num_timesteps
+            reward_list = self.training_env.get_attr('last_reward_list')[0] if hasattr(self.training_env, 'get_attr') else None
             
-            # 根據保存頻率決定是否保存模型
-            if current_epoch % self.save_freq == 0:
-                self.save_model(current_epoch)
+            # 更新獎勵歷史
+            if hasattr(self.locals, 'rewards') and self.locals['rewards'] is not None:
+                current_reward = self.locals['rewards'][0]  # 取得當前步驟的獎勵
+                self.recent_rewards.append(current_reward)
+                # 保持最近1000步的獎勵記錄
+                if len(self.recent_rewards) > 1000:
+                    self.recent_rewards.pop(0)
             
-            self.last_epoch = current_epoch
-        return True
+            # 計算平均獎勵
+            mean_reward = np.mean(self.recent_rewards) if self.recent_rewards else 0
+            
+            # 更新訓練資訊
+            train_info = {
+                'fps': self.model.logger.name_to_value.get('time/fps', 0),
+                'total_timesteps': self.model.num_timesteps,
+                'mean_reward': float(mean_reward),
+                'step': current_step,
+                'max_steps': self.model._total_timesteps  # 總訓練步數
+            }
+            
+            # 更新日誌資訊
+            self._logger.update_training_info(train_info)
+            self._logger.update_env_info(current_epoch, current_step, reward_list)
+            
+            # 每10步更新一次顯示
+            if self.n_calls % 10 == 0:
+                self._logger.display()
+            
+            # 檢查是否需要保存模型
+            if current_epoch != self.last_epoch and current_epoch % self.save_freq == 0:
+                self._save_model(current_epoch)
+                self.last_epoch = current_epoch
+            
+            return True
+            
+        except Exception as e:
+            self._logger.log_error(e)
+            return False
+
+    def _on_rollout_end(self) -> None:
+        """每個rollout結束時更新獎勵統計"""
+        try:
+            ep_info_buf = self.model.ep_info_buffer
+            if ep_info_buf is not None and len(ep_info_buf) > 0:
+                # 取得最近完成的回合資訊
+                for ep_info in ep_info_buf:
+                    if 'r' in ep_info:  # 'r' 是回合總獎勵
+                        self.episode_rewards.append(ep_info['r'])
+                
+                # 保持最近100個回合的記錄
+                if len(self.episode_rewards) > 100:
+                    self.episode_rewards = self.episode_rewards[-100:]
+        except Exception as e:
+            self._logger.log_error(e)
     
-    def save_model(self, epoch):
+    def _save_model(self, epoch):
         """安全地將模型保存到檔案"""
         try:
             path = f"models/ppo_crawler_ep{epoch:03d}.zip"
             self.model.save(path)
-            print(f"模型已保存: {path}")
+            print(f"\n模型已保存: {path}")
         except Exception as e:
-            print(f"保存模型時發生錯誤: {e}")
-            
-    def get_last_epoch(self):
-        """獲取最後記錄的epoch編號"""
-        return self.last_epoch
+            self._logger.log_error(e)
 
 def get_latest_epoch(model_dir="models"):
-    """
-    從模型目錄中獲取最新的訓練世代號碼
-    
-    Args:
-        model_dir: 模型存儲目錄路徑
-    Returns:
-        int: 最新的世代編號，如果沒有找到則返回0
-    """
+    """獲取最新的訓練世代號碼"""
     try:
-        model_files = [f for f in os.listdir(model_dir) if f.startswith("ppo_crawler_ep") and f.endswith(".zip")]
+        if not os.path.exists(model_dir):
+            os.makedirs(model_dir)
+            return 0
+            
+        model_files = [f for f in os.listdir(model_dir) 
+                      if f.startswith("ppo_crawler_ep") and f.endswith(".zip")]
         if not model_files:
             return 0
+            
         epochs = [int(f.split('_ep')[1].split('.')[0]) for f in model_files]
         return max(epochs)
     except Exception as e:
@@ -71,22 +118,23 @@ def get_latest_epoch(model_dir="models"):
 env = None      # 訓練環境實例
 model = None    # PPO模型實例
 callback = None # 訓練回調實例
+logger = None   # 日誌實例
 
 def signal_handler(sig, frame):
-    """
-    處理中斷信號的處理器（如Ctrl+C）
-    確保程序正確關閉並保存進度
-    """
-    print('收到中斷信號 (Ctrl+C)，正在關閉...')
+    """處理中斷信號"""
+    print('\n收到中斷信號 (Ctrl+C)，正在關閉...')
     try:
         if env is not None:
             current_epoch = env.epoch
             # 在callback存在且epoch有效時保存模型
-            if callback is not None and current_epoch > 0:
-                callback.save_model(current_epoch)
+            if callback is not None and current_epoch > 0 and hasattr(callback, '_save_model'):
+                callback._save_model(current_epoch)
             env.close()
     except Exception as e:
-        print(f"關閉時發生錯誤: {e}")
+        if logger is not None:
+            logger.log_error(e)
+        else:
+            print(f"關閉時發生錯誤: {e}")
     finally:
         sys.exit(0)
 
@@ -94,18 +142,13 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 def main():
-    """
-    主訓練循環
-    
-    功能：
-    - 初始化訓練環境和模型
-    - 設置訓練參數
-    - 執行訓練循環
-    - 處理異常情況並確保資源正確釋放
-    """
-    global env, model, callback
+    """主訓練函數"""
+    global env, model, callback, logger
     
     try:
+        # 初始化日誌系統
+        logger = TrainLog()
+        
         # 獲取最新的訓練世代
         current_epoch = get_latest_epoch()
         print(f"從 epoch {current_epoch} 開始訓練")
@@ -122,7 +165,7 @@ def main():
         model_params = {
             "policy": CustomPolicy,         # 使用自定義策略網絡
             "env": env,                     # 訓練環境
-            "verbose": 1,                   # 輸出詳細程度
+            "verbose": 0,                   # 設為0以禁用進度條
             "learning_rate": 3e-4,          # 學習率
             "n_steps": 2048,               # 每次更新的步數
             "batch_size": 64,              # 批次大小
@@ -144,10 +187,10 @@ def main():
         if os.path.exists(latest_model_path):
             print(f"載入之前的模型: {latest_model_path}")
             try:
-                model = PPO.load(latest_model_path, env=env)
+                model = PPO.load(latest_model_path, env=env, verbose=0)  # 這裡也要設置 verbose=0
                 model.policy.env = env
             except Exception as e:
-                print(f"載入模型失敗: {e}")
+                logger.log_error(e)
                 print("創建新模型...")
                 model = PPO(**model_params)
         else:
@@ -156,7 +199,7 @@ def main():
             model.policy.env = env
 
         # 初始化訓練回調
-        callback = EpisodeCallback(save_freq=1)
+        callback = EnhancedEpisodeCallback(train_logger=logger, save_freq=1)
         
         # 設置總訓練步數
         total_timesteps = 1_000_000
@@ -168,22 +211,26 @@ def main():
             reset_num_timesteps=False,      # 不重置步數計數器
             tb_log_name="PPO",             # TensorBoard日誌名稱
             callback=callback,              # 使用自定義回調
-            progress_bar=True               # 顯示進度條
+            progress_bar=False              # 禁用進度條
         )
         
-        print("訓練完成！")
+        print("\n訓練完成！")
         
     except Exception as e:
-        print(f"訓練過程中發生錯誤: {e}")
-        import traceback
-        traceback.print_exc()
+        if logger is not None:
+            logger.log_error(e)
+        else:
+            print(f"訓練過程中發生錯誤: {e}")
     finally:
         # 確保環境資源被正確釋放
         try:
             if env is not None:
                 env.close()
         except Exception as e:
-            print(f"清理資源時發生錯誤: {e}")
+            if logger is not None:
+                logger.log_error(e)
+            else:
+                print(f"清理資源時發生錯誤: {e}")
 
 if __name__ == "__main__":
     main()

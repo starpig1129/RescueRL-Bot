@@ -16,7 +16,7 @@ import time
 from reward.Reward import RewardFunction
 from DataHandler import DataHandler
 from torchvision import transforms 
-
+from logger import TrainLog
 # 影像標準化轉換
 normalize = transforms.Normalize(
     mean=[0.485, 0.456, 0.406],
@@ -45,6 +45,7 @@ class CrawlerEnv(gym.Env):
         self.test_mode = test_mode
         self.save_interval = save_interval
         self.should_save = False  # 是否儲存當前 epoch 的資料
+        self.last_reward_list = None
         
         # 動作與觀察空間定義
         self.action_space = gym.spaces.Discrete(9)  # 9個離散動作
@@ -69,7 +70,8 @@ class CrawlerEnv(gym.Env):
         
         # 資料處理相關設置
         base_dir = "test_logs" if test_mode else "train_logs"
-        self.data_handler = DataHandler(base_dir=base_dir)
+        logger = TrainLog()
+        self.data_handler = DataHandler(base_dir=base_dir,logger=logger)
         self.epoch = epoch
         self.step_counter = 0
         
@@ -278,6 +280,11 @@ class CrawlerEnv(gym.Env):
             
             # 前處理觀察資料
             obs = self.preprocess_observation(obs)
+            reward, reward_list = self.reward_function.get_reward(
+                results=results, 
+                reward_data=reward_data
+            )
+            self.last_reward_list = reward_list
             return obs, reward, done, {}
 
         except Exception as e:
