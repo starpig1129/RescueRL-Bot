@@ -46,6 +46,9 @@ class CrawlerEnv(gym.Env):
         self.save_interval = save_interval
         self.should_save = False  # 是否儲存當前 epoch 的資料
         self.last_reward_list = None
+        self.last_update_time = time.time()
+        self.fps_counter = 0
+        self.fps = 0
         
         # 動作與觀察空間定義
         self.action_space = gym.spaces.Discrete(9)  # 9個離散動作
@@ -70,10 +73,10 @@ class CrawlerEnv(gym.Env):
         
         # 資料處理相關設置
         base_dir = "test_logs" if test_mode else "train_logs"
-        logger = TrainLog()
-        self.data_handler = DataHandler(base_dir=base_dir,logger=logger)
+        self.logger = TrainLog()
+        self.data_handler = DataHandler(base_dir=base_dir,logger=self.logger)
         self.epoch = epoch
-        self.step_counter = 0
+        self.step_count = 0
         
         # 重置事件相關設置
         self.reset_event = threading.Event()
@@ -239,92 +242,111 @@ class CrawlerEnv(gym.Env):
             tuple: (observation, reward, done, info)
         """
         try:
-            # 將動作轉換為角度並發送控制訊號
+            # 更新步數計數
+            self.step_count += 1
+            
+            # 計算FPS
+            current_time = time.time()
+            dt = current_time - self.last_update_time
+            if dt >= 1.0:  # 每秒更新一次FPS
+                self.fps = self.fps_counter / dt
+                self.fps_counter = 0
+                self.last_update_time = current_time
+            self.fps_counter += 1
+            
+            # 執行動作並獲取結果
             self.angle_degrees = action * 40
             self.send_control_signal()
-
-            # 接收並處理觀察資料
+            
             results, obs, origin_image = self.receive_image()
             if obs is None:
-                print("未能接收到有效的觀察資料")
                 return None, 0, True, {}
-
-            # 接收獎勵計算所需資料
+                
             reward_data = self.receive_data()
             if reward_data is None:
-                print("未能接收到有效的獎勵資料")
                 return None, 0, True, {}
-
-            # 計算獎勵和是否結束
+                
+            # 計算獎勵
             reward, reward_list = self.reward_function.get_reward(
-                results=results, 
+                results=results,
                 reward_data=reward_data
             )
-            done = self.reset_event.is_set()
-
-            # 更新步數計數器
-            self.step_counter += 1
             
-            # 根據儲存間隔決定是否儲存資料
+            # 更新獎勵列表
+            self.last_reward_list = reward_list.copy() if reward_list is not None else None
+            
+            # 檢查是否需要保存數據
             if self.should_save:
-                self.data_handler.save_step_data(
-                    self.step_counter,
-                    obs,
-                    self.angle_degrees,
-                    reward,
-                    reward_list,
-                    origin_image,
-                    results,
-                    self.layer_outputs
-                )
+                try:
+                    self.data_handler.save_step_data(
+                        self.step_count,
+                        obs,
+                        self.angle_degrees,
+                        reward,
+                        reward_list,
+                        origin_image,
+                        results,
+                        self.layer_outputs
+                    )
+                except Exception as e:
+                    if self.logger:
+                        self.logger.log_error(e)
             
-            # 前處理觀察資料
-            obs = self.preprocess_observation(obs)
-            reward, reward_list = self.reward_function.get_reward(
-                results=results, 
-                reward_data=reward_data
-            )
-            self.last_reward_list = reward_list
-            return obs, reward, done, {}
-
+            # 處理觀察數據
+            processed_obs = self.preprocess_observation(obs)
+            done = self.reset_event.is_set()
+            
+            return processed_obs, reward, done, {
+                'reward_list': reward_list,
+                'fps': self.fps,
+                'step': self.step_count
+            }
+            
         except Exception as e:
-            print(f"步驟執行時發生錯誤: {e}")
+            if self.logger:
+                self.logger.log_error(e)
             return None, 0, True, {}
 
     def reset(self):
-        """
-        重置環境狀態
-        
-        返回:
-            ndarray: 初始觀察資料
-        """
-        # 關閉上一個世代的資料檔案
-        if self.epoch > 0 and self.should_save:
-            self.data_handler.close_epoch_file()
-
-        # 更新世代計數器
-        self.epoch += 1
-        self.step_counter = 0
-        
-        # 根據儲存間隔決定是否儲存這個世代的資料
-        self.should_save = (self.epoch % self.save_interval) == 0
-        
-        # 創建新的資料檔案
-        if self.should_save:
-            self.data_handler.create_epoch_file(self.epoch)
-            print(f"將儲存第 {self.epoch} 個世代的資料")
-        else:
-            print(f"跳過第 {self.epoch} 個世代的資料儲存")
-
-        # 等待 Unity 端的重置訊號
-        self.reset_event.wait()
-        self.reset_event.clear()
-
-        # 接收初始觀察資料
-        results, obs, origin_image = self.receive_image()
-        print("環境重置完成")
-        
-        return self.preprocess_observation(obs)
+        try:
+            # 關閉上一個世代的數據文件
+            if self.epoch > 0 and self.should_save:
+                self.data_handler.close_epoch_file()
+            
+            # 更新計數器
+            self.epoch += 1
+            self.step_count = 0
+            self.fps_counter = 0
+            self.fps = 0
+            self.last_update_time = time.time()
+            
+            # 設置數據保存標誌
+            self.should_save = (self.epoch % self.save_interval) == 0
+            
+            # 創建新的數據文件
+            if self.should_save:
+                self.data_handler.create_epoch_file(self.epoch)
+                if self.logger:
+                    self.logger.log_info(f"將儲存第 {self.epoch} 個世代的資料")
+            else:
+                if self.logger:
+                    self.logger.log_info(f"跳過第 {self.epoch} 個世代的資料儲存")
+            
+            # 等待重置信號
+            self.reset_event.wait()
+            self.reset_event.clear()
+            
+            # 獲取初始觀察
+            results, obs, origin_image = self.receive_image()
+            if self.logger:
+                self.logger.log_info("環境重置完成")
+            
+            return self.preprocess_observation(obs)
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.log_error(e)
+            return None
 
     def preprocess_observation(self, obs):
         """

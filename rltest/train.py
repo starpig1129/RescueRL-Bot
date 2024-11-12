@@ -1,7 +1,7 @@
 import os
 import signal
 import sys
-import torch
+import time
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
@@ -10,55 +10,64 @@ from policy import CustomPolicy
 from logger import TrainLog
 
 class EnhancedEpisodeCallback(BaseCallback):
-    """
-    增強版回調類：用於監控訓練過程並更新日誌
-    """
     def __init__(self, train_logger, save_freq=1, verbose=1):
         super(EnhancedEpisodeCallback, self).__init__(verbose)
-        self.save_freq = save_freq          
-        self.last_epoch = 0                 
-        self._logger = train_logger         
-        self.episode_rewards = []           
-        self.recent_rewards = []            # 用於計算移動平均
-        self.n_calls = 0                    
-        
+        self.save_freq = save_freq
+        self.last_epoch = 0
+        self._logger = train_logger
+        self.episode_rewards = []
+        self.recent_rewards = []
+        self.n_calls = 0
+        self.update_interval = 10  # 每10步更新一次顯示
+        self.last_update_time = time.time()
+        self.last_step = 0
     def _on_step(self) -> bool:
-        """每一步更新訓練狀態"""
         self.n_calls += 1
         
         try:
-            # 從訓練環境獲取當前資訊
+            # 獲取當前訓練狀態
             current_epoch = self.training_env.get_attr('epoch')[0]
             current_step = self.num_timesteps
-            reward_list = self.training_env.get_attr('last_reward_list')[0] if hasattr(self.training_env, 'get_attr') else None
+            current_time = time.time()
             
             # 更新獎勵歷史
-            if hasattr(self.locals, 'rewards') and self.locals['rewards'] is not None:
-                current_reward = self.locals['rewards'][0]  # 取得當前步驟的獎勵
+            if self.locals.get('rewards') is not None:
+                current_reward = self.locals['rewards'][0]
                 self.recent_rewards.append(current_reward)
-                # 保持最近1000步的獎勵記錄
                 if len(self.recent_rewards) > 1000:
                     self.recent_rewards.pop(0)
             
             # 計算平均獎勵
             mean_reward = np.mean(self.recent_rewards) if self.recent_rewards else 0
             
-            # 更新訓練資訊
+            # 計算FPS
+            if (current_time - self.last_update_time) > 0:
+                current_fps = (current_step - self.last_step) / (current_time - self.last_update_time)
+            else:
+                current_fps = 0
+                
+            # 更新訓練信息
             train_info = {
-                'fps': self.model.logger.name_to_value.get('time/fps', 0),
+                'fps': current_fps,
                 'total_timesteps': self.model.num_timesteps,
                 'mean_reward': float(mean_reward),
                 'step': current_step,
-                'max_steps': self.model._total_timesteps  # 總訓練步數
+                'max_steps': self.model._total_timesteps
             }
             
-            # 更新日誌資訊
+            # 更新環境信息
+            reward_list = (self.training_env.get_attr('last_reward_list')[0] 
+                         if hasattr(self.training_env, 'get_attr') else None)
+            
+            # 更新logger
             self._logger.update_training_info(train_info)
             self._logger.update_env_info(current_epoch, current_step, reward_list)
             
-            # 每10步更新一次顯示
-            if self.n_calls % 10 == 0:
+            # 定期更新顯示
+            if self.n_calls % self.update_interval == 0:
                 self._logger.display()
+                self.last_update_time = current_time
+                self.last_step = current_step
             
             # 檢查是否需要保存模型
             if current_epoch != self.last_epoch and current_epoch % self.save_freq == 0:

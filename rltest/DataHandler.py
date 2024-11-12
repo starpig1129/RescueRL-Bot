@@ -109,15 +109,27 @@ class DataHandler:
             self.stats['total_features_saved'] += 1
             self.stats['current_epoch_features'] += 1
         
-        # 計算保存速率
+        # 計算保存速率（使用移動平均）
         if self.stats['last_save_time'] > 0:
             time_diff = current_time - self.stats['last_save_time']
             if time_diff > 0:
-                self.stats['data_save_rate'] = 1.0 / time_diff
+                current_rate = 1.0 / time_diff
+                # 使用移動平均平滑速率
+                alpha = 0.1  # 平滑因子
+                self.stats['data_save_rate'] = (alpha * current_rate + 
+                    (1 - alpha) * self.stats['data_save_rate'])
         
         self.stats['last_save_time'] = current_time
+        self.stats['write_queue_size'] = self.write_queue.qsize()
         
-        # 立即更新logger的統計信息
+        # 更新磁碟使用量
+        if self.env_file is not None:
+            try:
+                self.stats['disk_usage'] = os.path.getsize(self.env_file.filename) / (1024 * 1024)
+            except:
+                pass
+        
+        # 立即通知logger更新統計信息
         if self.logger:
             self.logger.update_data_handler_stats(self.stats)
 
