@@ -2,7 +2,7 @@ import numpy as np
 
 class RewardFunction:
     """
-    獎勵函數類別，用於計算強化學習環境中的獎勵值
+    獎勵函數類別，用於計算環境中的獎勵值
     包含多個子獎勵函數，最終將所有獎勵組合成總獎勵
     """
     def __init__(self):

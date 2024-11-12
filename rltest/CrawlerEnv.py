@@ -25,7 +25,7 @@ normalize = transforms.Normalize(
 
 class CrawlerEnv(gym.Env):
     """
-    Crawler 強化學習環境
+    Crawler 環境
     實現了與 Unity 端的通信、影像處理、獎勵計算等功能
     """
     def __init__(self, show, epoch=0, test_mode=False, save_interval=1):
