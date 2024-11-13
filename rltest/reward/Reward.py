@@ -17,6 +17,39 @@ class RewardFunction:
         self.target1_reward = True    # 目標1是否可獲得獎勵
         self.target2_reward = True    # 目標2是否可獲得獎勵
         self.target3_reward = True    # 目標3是否可獲得獎勵
+        # 方向平滑相關變數
+        self.angle_change_threshold = 80  # 角度變化閾值(超過此值給予懲罰)
+    def calculate_angle_change_reward(self, current_angle):
+        """
+        計算方向變化的獎勵
+        Args:
+            current_angle: 當前角度
+        Returns:
+            float: 角度變化的獎勵值
+        """
+        # 如果是第一次執行,設置初始角度並返回0
+        if self.last_angle is None:
+            self.last_angle = current_angle
+            return 0
+            
+        # 計算角度變化
+        angle_diff = abs(current_angle - self.last_angle)
+        # 處理角度循環(例如從359度到1度)
+        if angle_diff > 180:
+            angle_diff = 360 - angle_diff
+            
+        # 更新last_angle
+        self.last_angle = current_angle
+        
+        # 基於角度變化計算獎勵
+        if angle_diff <= self.angle_change_threshold:
+            # 變化在閾值內,給予平滑獎勵
+            smoothness_reward = 0.5 * (1 - angle_diff / self.angle_change_threshold)
+        else:
+            # 變化超過閾值,給予懲罰
+            smoothness_reward = -0.5 * (angle_diff - self.angle_change_threshold) / 180
+            
+        return smoothness_reward
     
     def person_detec_reward(self, results):
         """
@@ -201,7 +234,7 @@ class RewardFunction:
         
         return target_positions[nearest_idx], targets[nearest_idx]['screenPosition']
 
-    def get_reward(self, results, reward_data):
+    def get_reward(self, results, reward_data,angle):
         """
         計算總體獎勵值
         Args:
@@ -223,6 +256,7 @@ class RewardFunction:
         move_reward, move_punish = self.move_reward(point1)
         upsidedown_punish = self.is_up(up)
         touch_reward, con_reward = self.touch(is_touch)
+        direction_smooth_reward = self.calculate_angle_change_reward(angle)
 
         # 計算總獎勵
         reward = (
@@ -237,7 +271,8 @@ class RewardFunction:
             move_punish * 0.25 +         # 停滯懲罰
             upsidedown_punish * 10 +     # 翻倒懲罰
             touch_reward * 100 +         # 碰觸目標獎勵
-            con_reward * 1               # 持續碰觸獎勵
+            con_reward * 1     +         # 持續碰觸獎勵
+            direction_smooth_reward * 3  # 方向平滑獎勵
         )
 
         # 回傳總獎勵和分項獎勵列表

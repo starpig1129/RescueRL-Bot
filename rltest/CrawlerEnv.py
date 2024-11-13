@@ -278,7 +278,8 @@ class CrawlerEnv(gym.Env):
             # 計算獎勵
             reward, reward_list = self.reward_function.get_reward(
                 results=results,
-                reward_data=reward_data
+                reward_data=reward_data,
+                angle = self.angle_degrees
             )
             
             # 更新獎勵列表
