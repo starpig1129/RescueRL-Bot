@@ -272,7 +272,7 @@ class RewardFunction:
             upsidedown_punish * 10 +     # 翻倒懲罰
             touch_reward * 100 +         # 碰觸目標獎勵
             con_reward * 1     +         # 持續碰觸獎勵
-            direction_smooth_reward * 3  # 方向平滑獎勵
+            direction_smooth_reward * 1  # 方向平滑獎勵
         )
 
         # 回傳總獎勵和分項獎勵列表
