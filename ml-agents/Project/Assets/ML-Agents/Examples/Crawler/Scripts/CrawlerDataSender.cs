@@ -93,7 +93,7 @@ public class CrawlerDataSender : MonoBehaviour
     private object PrepareData()
     {
         Vector3 crawlerPosition = transform.position;
-        Vector3 crawlerRotation = transform.up;
+        Vector3 crawlerRotation = transform.eulerAngles; // 使用歐拉角度
         GameObject[] targetObjects = GameObject.FindGameObjectsWithTag(targetTag);
 
         var targetDataList = new List<object>();
