@@ -17,6 +17,7 @@ from reward.Reward import RewardFunction
 from DataHandler import DataHandler
 from torchvision import transforms 
 from logger import TrainLog
+
 # 影像標準化轉換
 normalize = transforms.Normalize(
     mean=[0.485, 0.456, 0.406],
@@ -51,9 +52,9 @@ class CrawlerEnv(gym.Env):
         self.fps_counter = 0
         self.fps = 0
         
-        # 動作與觀察空間定義
-        self.action_space = gym.spaces.Discrete(9)  # 9個離散動作
-        self.observation_space = gym.spaces.Box(    # 224x224 RGB 影像
+        # 動作空間: 0=左轉(-45°), 1=直走(0°), 2=右轉(45°)
+        self.action_space = gym.spaces.Discrete(3)
+        self.observation_space = gym.spaces.Box(
             low=0.0, 
             high=1.0, 
             shape=(3, 224, 224), 
@@ -61,13 +62,18 @@ class CrawlerEnv(gym.Env):
         )
 
         # 控制相關參數
-        self.magnitude = 5.0        # 移動幅度
-        self.angle_degrees = 90     # 初始角度
+        self.magnitude = 2.0        # 移動幅度
+        self.current_angle = 0      # 當前絕對角度
+        self.relative_angles = {    # 相對角度映射
+            0: -45,  # 左轉
+            1: 0,    # 直走
+            2: 45    # 右轉
+        }
         
         # 模型與獎勵函數初始化
-        self.YoloModel = YOLO('yolo/1110_skew.pt', verbose=False)  # YOLO 物件偵測模型
-        self.reward_function = RewardFunction()               # 獎勵計算器
-        self.layer_outputs = None                            # 神經網路層輸出暫存
+        self.YoloModel = YOLO('yolo/1110_skew.pt', verbose=False)
+        self.reward_function = RewardFunction()
+        self.layer_outputs = None
         
         # Socket 伺服器相關變量初始化
         self._init_socket_vars()
@@ -239,13 +245,12 @@ class CrawlerEnv(gym.Env):
                 if not self.reset_thread_stop.is_set():
                     print(f"重置連接發生錯誤: {e}")
                 continue
-
     def step(self, action):
         """
         執行一個環境步驟
         
         參數:
-            action (int): 要執行的動作索引 (0-8)
+            action (int): 要執行的動作索引 (0-2)
             
         返回:
             tuple: (observation, reward, done, info)
@@ -254,44 +259,48 @@ class CrawlerEnv(gym.Env):
             # 更新步數計數
             self.step_count += 1
             
-            # 計算FPS
+            # 更新FPS
             current_time = time.time()
             dt = current_time - self.last_update_time
-            if dt >= 1.0:  # 每秒更新一次FPS
+            if dt >= 1.0:
                 self.fps = self.fps_counter / dt
                 self.fps_counter = 0
                 self.last_update_time = current_time
             self.fps_counter += 1
             
-            # 執行動作並獲取結果
-            self.angle_degrees = action * 40
-            self.send_control_signal()
+            # 先獲取Crawler的當前狀態
+            reward_data = self.receive_data()
+            if reward_data is None:
+                return None, 0, True, {}
+            
+            # 獲取Crawler的朝向(y軸旋轉角度)
+            crawler_rotation = float(reward_data['rotation']['y'])
+            
+            # 根據動作選擇相對角度
+            relative_angle = self.relative_angles[action]
+            self.current_angle = relative_angle  # 直接使用相對角度
+            
+            # 發送控制信號,傳入Crawler的朝向
+            self.send_control_signal(crawler_rotation)
             
             results, obs, origin_image = self.receive_image()
             if obs is None:
                 return None, 0, True, {}
                 
-            reward_data = self.receive_data()
-            if reward_data is None:
-                return None, 0, True, {}
-                
-            # 計算獎勵
             reward, reward_list = self.reward_function.get_reward(
                 results=results,
                 reward_data=reward_data,
-                angle = self.angle_degrees
+                angle=relative_angle
             )
             
-            # 更新獎勵列表
             self.last_reward_list = reward_list.copy() if reward_list is not None else None
             
-            # 檢查是否需要保存數據
             if self.should_save:
                 try:
                     self.data_handler.save_step_data(
                         self.step_count,
                         obs,
-                        self.angle_degrees,
+                        relative_angle,
                         reward,
                         reward_list,
                         origin_image,
@@ -302,33 +311,33 @@ class CrawlerEnv(gym.Env):
                     if self.logger:
                         self.logger.log_error(e)
             
-            # 處理觀察數據
             processed_obs = self.preprocess_observation(obs)
             done = self.reset_event.is_set()
             
             return processed_obs, reward, done, {
                 'reward_list': reward_list,
                 'fps': self.fps,
-                'step': self.step_count
+                'step': self.step_count,
+                'current_angle': self.current_angle,
+                'relative_angle': relative_angle
             }
             
         except Exception as e:
             if self.logger:
                 self.logger.log_error(e)
             return None, 0, True, {}
-
     def reset(self):
         try:
             # 關閉上一個世代的數據文件
             if self.epoch > 0 and self.should_save:
                 self.data_handler.close_epoch_file()
-            
             # 更新計數器
             self.epoch += 1
             self.step_count = 0
             self.fps_counter = 0
             self.fps = 0
             self.last_update_time = time.time()
+            self.current_angle = 0  # 重置當前角度
             
             # 設置數據保存標誌
             self.should_save = (self.epoch % self.save_interval) == 0
@@ -341,7 +350,6 @@ class CrawlerEnv(gym.Env):
             else:
                 if self.logger:
                     self.logger.log_info(f"跳過第 {self.epoch} 個世代的資料儲存")
-            
             # 等待重置信號
             self.reset_event.wait()
             self.reset_event.clear()
@@ -383,30 +391,34 @@ class CrawlerEnv(gym.Env):
         obs = resize(obs)
         
         return obs
-
-    def send_control_signal(self):
+    def send_control_signal(self, crawler_rotation):
         """
         向 Unity 發送控制訊號
-        將角度轉換為 x,z 平面上的方向向量
+        根據Crawler的朝向和相對角度計算方向指示器的位置
+        
+        參數:
+            crawler_rotation: Crawler的當前朝向(y軸旋轉角度)
         """
         try:
-            # 確保角度在 0-360 度範圍內
-            if self.angle_degrees >= 360:
-                self.angle_degrees = 0
+            # 計算相對於Crawler前方的本地坐標
+            local_angle_rad = math.radians(self.current_angle)
+            local_x = self.magnitude * math.sin(local_angle_rad)  # 相對於Crawler前方的X坐標
+            local_z = self.magnitude * math.cos(local_angle_rad)  # 相對於Crawler前方的Z坐標
 
-            # 將角度轉換為弧度並計算方向向量
-            angle_radians = math.radians(self.angle_degrees)
-            target_ford_x = self.magnitude * math.cos(angle_radians)
-            target_ford_z = self.magnitude * math.sin(angle_radians)
+            # 將Crawler的旋轉角度轉換為弧度
+            crawler_rotation_rad = math.radians(crawler_rotation)
+
+            # 將本地坐標轉換為世界坐標
+            world_x = local_x * math.cos(crawler_rotation_rad) - local_z * math.sin(crawler_rotation_rad)
+            world_z = local_x * math.sin(crawler_rotation_rad) + local_z * math.cos(crawler_rotation_rad)
 
             # 打包並發送資料
-            buffer = struct.pack('ff', target_ford_x, target_ford_z)
+            buffer = struct.pack('ff', world_x, world_z)
             self.control_conn.sendall(buffer)
 
         except Exception as e:
             print(f"發送控制訊號時發生錯誤: {e}")
             self.control_conn.close()
-            # 嘗試重新連接
             self.control_conn, self.control_addr = self.reconnect_socket(
                 self.control_socket, 
                 self.control_address, 
