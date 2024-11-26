@@ -11,15 +11,14 @@ namespace Unity.MLAgentsExamples
         public Transform transformToFollow;
         public Transform targetToLookAt;
         public float heightOffset;
+        public float magnitude = 2.0f;  // 指示器與Crawler的距離
 
         private float m_StartingYPos;
         private TcpClient tcpClient;
         private NetworkStream stream;
         private Thread tcpThread;
 
-        private float currentAngle = 0f;    // 當前絕對角度
-        private float targetFordX;          // 目標前進方向X
-        private float targetFordZ;          // 目標前進方向Z
+        private float relativeAngle = 0f;  // 相對角度
         private bool dataReceived;
 
         void Start()
@@ -41,19 +40,12 @@ namespace Unity.MLAgentsExamples
             {
                 while (tcpClient.Connected)
                 {
-                    byte[] buffer = new byte[8];
+                    byte[] buffer = new byte[4];  // 只接收一個float (相對角度)
                     int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead == 8)
+                    if (bytesRead == 4)
                     {
-                        // 接收從Python發送的方向向量
-                        targetFordX = BitConverter.ToSingle(buffer, 0) * 2;
-                        targetFordZ = BitConverter.ToSingle(buffer, 4) * 2;
-
-                        // 計算新的絕對角度
-                        currentAngle = Mathf.Atan2(targetFordZ, targetFordX) * Mathf.Rad2Deg;
-                        if (currentAngle < 0)
-                            currentAngle += 360f;
-
+                        // 接收從Python發送的相對角度(弧度)
+                        relativeAngle = BitConverter.ToSingle(buffer, 0) * Mathf.Rad2Deg;
                         dataReceived = true;
                     }
                 }
@@ -69,25 +61,38 @@ namespace Unity.MLAgentsExamples
             if (updatedByAgent || !dataReceived)
                 return;
 
-            // 計算新位置 - 相對於Crawler的位置
+            // 獲取Crawler的當前朝向
+            float crawlerRotation = transformToFollow.eulerAngles.y;
+
+            // 計算世界空間中的目標角度
+            float worldAngle = crawlerRotation + relativeAngle;
+
+            // 將角度轉換為弧度
+            float angleRad = worldAngle * Mathf.Deg2Rad;
+
+            // 計算相對於Crawler的位置
+            float targetX = magnitude * Mathf.Sin(angleRad);
+            float targetZ = magnitude * Mathf.Cos(angleRad);
+
+            // 計算新位置
             Vector3 newPosition = transformToFollow.position + new Vector3(
-                targetFordX,
+                targetX,
                 heightOffset,
-                targetFordZ
+                targetZ
             );
 
             // 平滑移動到新位置
             transform.position = Vector3.Lerp(
                 transform.position,
                 newPosition,
-                Time.deltaTime * 5f  // 調整移動速度
+                Time.deltaTime * 5f
             );
 
-            // 更新朝向 - 使用當前角度
+            // 更新朝向 - 始終朝向移動方向
             Vector3 direction = new Vector3(
-                Mathf.Cos(currentAngle * Mathf.Deg2Rad),
+                Mathf.Sin(angleRad),
                 0f,
-                Mathf.Sin(currentAngle * Mathf.Deg2Rad)
+                Mathf.Cos(angleRad)
             );
 
             // 平滑旋轉
@@ -95,7 +100,7 @@ namespace Unity.MLAgentsExamples
             transform.rotation = Quaternion.Slerp(
                 transform.rotation,
                 targetRotation,
-                Time.deltaTime * 5f  // 調整旋轉速度
+                Time.deltaTime * 5f
             );
 
             dataReceived = false;
@@ -115,27 +120,27 @@ namespace Unity.MLAgentsExamples
         {
             if (!updatedByAgent && dataReceived)
             {
-                // 計算新位置
+                float crawlerRotation = transformToFollow.eulerAngles.y;
+                float worldAngle = crawlerRotation + relativeAngle;
+                float angleRad = worldAngle * Mathf.Deg2Rad;
+
+                float targetX = magnitude * Mathf.Sin(angleRad);
+                float targetZ = magnitude * Mathf.Cos(angleRad);
+
+                // 立即更新位置
                 Vector3 newPosition = transformToFollow.position + new Vector3(
-                    targetFordX,
+                    targetX,
                     heightOffset,
-                    targetFordZ
+                    targetZ
                 );
 
-                // 立即更新位置和朝向
                 transform.position = newPosition;
                 transform.rotation = Quaternion.LookRotation(new Vector3(
-                    Mathf.Cos(currentAngle * Mathf.Deg2Rad),
+                    Mathf.Sin(angleRad),
                     0f,
-                    Mathf.Sin(currentAngle * Mathf.Deg2Rad)
+                    Mathf.Cos(angleRad)
                 ));
             }
-        }
-
-        // 獲取當前角度（用於調試）
-        public float GetCurrentAngle()
-        {
-            return currentAngle;
         }
     }
 }
