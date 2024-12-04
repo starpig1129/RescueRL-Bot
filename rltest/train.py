@@ -167,7 +167,7 @@ def main():
             show=False,              # 是否顯示視覺化界面
             epoch=current_epoch,     # 當前訓練世代
             test_mode=False,         # 是否為測試模式
-            save_interval=10         # 數據保存間隔
+            save_interval=50         # 數據保存間隔
         )
         
         # 設置PPO模型參數
@@ -211,7 +211,7 @@ def main():
         callback = EnhancedEpisodeCallback(train_logger=logger, save_freq=1)
         
         # 設置總訓練步數
-        total_timesteps = 1_000_000
+        total_timesteps = 5_00_000
         
         # 開始訓練循環
         print("\n開始訓練...")
