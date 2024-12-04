@@ -40,8 +40,7 @@ public class CrawlerAgent : Agent
     private byte[] resetSignal;
     // 訓練期間代理將走向的目標方向。
     [Header("走向目標")]
-    public Transform TargetPrefab; // 在Dynamic環境中使用的目標預製件
-    private Transform m_Target; // 訓練期間代理將走向的目標。
+    public Transform m_Target; // 訓練期間代理將走向的目標。
 
     [Header("身體部位")][Space(10)] public Transform body;
     public Transform leg0Upper;
@@ -84,7 +83,7 @@ public class CrawlerAgent : Agent
     private int currentEpoch = 0;
     public override void Initialize()
     {
-        SpawnTarget(TargetPrefab, transform.position);
+        //SpawnTarget(TargetPrefab, transform.position);
 
         m_OrientationCube = GetComponentInChildren<OrientationCubeController>();
         m_DirectionIndicator = GetComponentInChildren<DirectionIndicator>();

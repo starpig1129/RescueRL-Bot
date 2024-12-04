@@ -8,8 +8,8 @@ namespace Unity.MLAgentsExamples
     public class DirectionIndicator : MonoBehaviour
     {
         public bool updatedByAgent;
-        public Transform transformToFollow;
-        public Transform targetToLookAt;
+        public Transform transformToFollow;  // Crawler的Transform
+        public Transform targetToFollow;     // 要跟隨的目標物件
         public float heightOffset;
         public float magnitude = 2.0f;  // 指示器與Crawler的距離
 
