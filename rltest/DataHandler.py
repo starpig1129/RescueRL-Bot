@@ -217,8 +217,8 @@ class DataHandler:
                 chunks=True
             ),
             'actor_output': self.feature_file.create_dataset(
-                'layer_actor', (0, 9),
-                maxshape=(None, 9),
+                'layer_actor', (0,3),
+                maxshape=(None, 3),
                 dtype=np.float32,
                 chunks=True
             ),
