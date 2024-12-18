@@ -152,12 +152,12 @@ class RewardFunction:
         if is_touch[0]['x'] < -5 and self.target1_reward:
             self.target1_reward = False
             touch_reward = 1
-        elif is_touch[1]['x'] < -5 and self.target2_reward:
-            self.target2_reward = False
-            touch_reward = 1
-        elif is_touch[2]['x'] < -5 and self.target3_reward:
-            self.target3_reward = False
-            touch_reward = 1
+        # elif is_touch[1]['x'] < -5 and self.target2_reward:
+        #     self.target2_reward = False
+        #     touch_reward = 1
+        # elif is_touch[2]['x'] < -5 and self.target3_reward:
+        #     self.target3_reward = False
+        #     touch_reward = 1
 
         # 設定持續獎勵
         if touch_reward:
