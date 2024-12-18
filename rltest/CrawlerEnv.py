@@ -13,7 +13,7 @@ import threading
 import signal
 import sys
 import time
-from reward.Reward import RewardFunction
+from reward.Reward2 import RewardFunction  # 改用 Reward2
 from DataHandler import DataHandler
 from torchvision import transforms 
 from logger import TrainLog
@@ -291,6 +291,9 @@ class CrawlerEnv(gym.Env):
             self.fps_counter = 0
             self.fps = 0
             self.last_update_time = time.time()
+            
+            # 重置獎勵函數的狀態
+            self.reward_function.reset()
             
             self.should_save = (self.epoch % self.save_interval) == 0
             
