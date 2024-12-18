@@ -11,3 +11,4 @@ error_logs
 info_logs
 DataSplit.py
 DataDecompress.py
+output
