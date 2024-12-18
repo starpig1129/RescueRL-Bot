@@ -17,7 +17,10 @@ class RewardFunction:
         self.target1_reward = True    # 目標1是否可獲得獎勵
         self.target2_reward = True    # 目標2是否可獲得獎勵
         self.target3_reward = True    # 目標3是否可獲得獎勵
-    
+
+        # 移動距離歷史記錄
+        self.movement_history = []    # 儲存最近200步的移動距離
+        
     def person_detec_reward(self, results):
         """
         計算人像偵測獎勵
@@ -100,13 +103,12 @@ class RewardFunction:
 
     def move_reward(self, point1):
         """
-        計算移動相關的獎勵
+        計算移動相關的獎勵，基於最近200步的移動距離
         Args:
             point1: 當前位置的座標字典
         Returns:
-            tuple: (移動獎勵, 停滯懲罰)
+            tuple: (移動獎勵, 移動距離懲罰)
         """
-        move_punish = 0   # 停滯的懲罰
         move_reward = 0   # 移動的獎勵
 
         # 計算水平面上的移動距離
@@ -114,14 +116,28 @@ class RewardFunction:
         last_x, last_z = self.lastposition[0], self.lastposition[2]
         movedis = ((x1 - last_x) ** 2 + (z1 - last_z) ** 2) ** 0.5
         
-        # 判斷是否停滯
-        if movedis < 0.3:
-            move_punish = -1
-        else:
-            move_reward = 1
+        # 更新移動歷史
+        self.movement_history.append(movedis)
+        
+        # 保持最近200步的記錄
+        if len(self.movement_history) > 200:
+            self.movement_history.pop(0)
+        
+        # 計算最近200步的總移動距離
+        total_movement = sum(self.movement_history)
+        
+        # 使用sigmoid函數將總移動距離轉換為平滑的懲罰值
+        # 當總移動距離越小，懲罰值越接近-1
+        # 當總移動距離越大，懲罰值越接近0
+        move_punish = -1 / (1 + np.exp(total_movement - 10))
 
         # 更新上一次位置
         self.lastposition = [x1, self.lastposition[1], z1]
+        
+        # 基本移動獎勵
+        if movedis >= 0.3:
+            move_reward = 1
+
         return move_reward, move_punish
 
     def is_up(self, up):
@@ -234,7 +250,7 @@ class RewardFunction:
             viewdis_punish * 5 +         # 目標遠離視野中心懲罰
             everview_punish * 10 +       # 失去目標視野懲罰
             move_reward * 0.5 +          # 移動獎勵
-            move_punish * 0.25 +         # 停滯懲罰
+            move_punish * 10 +           # 移動距離懲罰
             upsidedown_punish * 10 +     # 翻倒懲罰
             touch_reward * 100 +         # 碰觸目標獎勵
             con_reward * 1               # 持續碰觸獎勵
