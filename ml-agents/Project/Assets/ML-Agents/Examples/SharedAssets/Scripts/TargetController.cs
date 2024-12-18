@@ -23,11 +23,11 @@ namespace Unity.MLAgentsExamples
 
         [Header("檢測的碰撞器標記")]
         public string tagToDetect = "agent"; //要檢測的碰撞器標記
-        
+
         [Header("目標放置")]
         public float spawnRadius; //隨機生成目標的半徑。
         public bool respawnIfTouched; //當觸摸到目標時，是否重新生成目標。
-        
+
         [Header("目標墜落保護")]
         public bool respawnIfFallsOffPlatform = true; //如果目標從平台上掉落，則重置位置。
         public float fallDistance = 5; //觸發重新生成的下墜距離
@@ -126,7 +126,7 @@ namespace Unity.MLAgentsExamples
 
                     //UnityEngine.Debug.Log("目前的 num 值: " + num); // 輸出 num 的值
 
-                    if (num == 3)
+                    if (num == 1)
                     {
 
                         StartCoroutine(ReloadSceneAfterDelay(2f)); // 延遲2秒後重新加載場景
@@ -135,7 +135,7 @@ namespace Unity.MLAgentsExamples
                         num = 0;
 
                     }
-                    
+
                     // 開始冷卻時間
                     StartCoroutine(CooldownCoroutine());
                 }
