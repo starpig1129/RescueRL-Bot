@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from DataReader import DataReader
+import os
 
 class DetectionResult:
     def __init__(self, epoch, frame_idx, frame, boxes, scores, classes):
@@ -28,7 +29,7 @@ def display_detection(frame, boxes, scores, classes):
 def find_detections(start_epoch, end_epoch, confidence_threshold=0.5):
     """找出指定世代範圍內所有成功偵測到人的畫面"""
     print(f"開始搜尋世代 {start_epoch} 到 {end_epoch} 的偵測結果...")
-    data_reader = DataReader()
+    data_reader = DataReader(base_dir='./rltest/train_logs')
     detection_results = []
     
     for epoch in range(start_epoch, end_epoch + 1, 50):  # 每50個世代為一個間隔
@@ -70,7 +71,7 @@ def find_detections(start_epoch, end_epoch, confidence_threshold=0.5):
     
     return detection_results
 
-def play_detections(detection_results):
+def play_detections(detection_results, save_video=False):
     """播放所有檢測結果"""
     if not detection_results:
         print("沒有找到任何檢測結果")
@@ -81,6 +82,21 @@ def play_detections(detection_results):
     
     cv2.namedWindow('Detections', cv2.WINDOW_NORMAL)
     cv2.resizeWindow('Detections', 1280, 720)
+    
+    # 設置視頻寫入器
+    video_writer = None
+    if save_video:
+        # 確保輸出目錄存在
+        os.makedirs('output', exist_ok=True)
+        # 生成輸出文件名
+        output_path = os.path.join('output', 
+            f'detections_e{detection_results[0].epoch}-{detection_results[-1].epoch}.mp4')
+        # 獲取第一幀的尺寸
+        height, width = detection_results[0].frame.shape[:2]
+        # 創建視頻寫入器
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(output_path, fourcc, 30.0, (width, height))
+        print(f"視頻將保存至: {output_path}")
     
     paused = False
     current_idx = 0
@@ -99,7 +115,13 @@ def play_detections(detection_results):
             cv2.putText(frame_with_detection, info_text, 
                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
+            # 顯示畫面
             cv2.imshow('Detections', frame_with_detection)
+            
+            # 如果需要保存視頻，寫入當前幀
+            if video_writer is not None:
+                video_writer.write(frame_with_detection)
+            
             current_idx += 1
         
         # 等待按鍵輸入
@@ -116,7 +138,13 @@ def play_detections(detection_results):
             frame_delay = max(1, frame_delay - 50)
             print(f"播放延遲: {frame_delay}ms")
     
+    # 清理資源
+    if video_writer is not None:
+        video_writer.release()
     cv2.destroyAllWindows()
+    
+    if save_video:
+        print(f"\n視頻已保存至: {output_path}")
 
 if __name__ == "__main__":
     import argparse
@@ -125,6 +153,7 @@ if __name__ == "__main__":
     parser.add_argument('--start-epoch', type=int, required=True, help='起始世代')
     parser.add_argument('--end-epoch', type=int, required=True, help='結束世代')
     parser.add_argument('--threshold', type=float, default=0.5, help='偵測信心度閾值')
+    parser.add_argument('--save-video', action='store_true', help='是否保存為視頻檔案')
     
     args = parser.parse_args()
     
@@ -134,4 +163,4 @@ if __name__ == "__main__":
     
     # 播放所有結果
     if results:
-        play_detections(results)
+        play_detections(results, args.save_video)
