@@ -111,7 +111,7 @@ class RewardFunction:
         movedis = ((x1 - last_x) ** 2 + (z1 - last_z) ** 2) ** 0.5
         
         self.movement_history.append(movedis)
-        if len(self.movement_history) > 200:
+        if len(self.movement_history) > 150:
             self.movement_history.pop(0)
         
         # 計算移動距離的均值和標準差
@@ -204,26 +204,19 @@ class RewardFunction:
         touch_reward, con_reward = self.touch(is_touch)
 
         # 調整獎勵權重
-        reward = (
-            person_detec_reward * 2 +     # 增加人像偵測獎勵權重
-            dis_reward * 15 +             # 增加接近目標獎勵
-            dis_punish * 7.5 +            # 調整遠離懲罰
-            inview_reward * 5 +           # 增加視野內獎勵
-            viewdis_reward * 8 +          # 增加視野中心獎勵
-            viewdis_punish * 4 +          # 降低視野懲罰
-            everview_punish * 8 +         # 調整失去視野懲罰
-            move_reward * 2 +             # 增加移動獎勵
-            move_punish * 8 +             # 調整移動懲罰
-            upsidedown_punish * 12 +      # 增加翻倒懲罰
-            touch_reward * 150 +          # 增加碰觸獎勵
-            con_reward * 1.5              # 增加持續獎勵
-        )
-
         reward_list = [
-            person_detec_reward, dis_reward, dis_punish,
-            inview_reward, viewdis_reward, viewdis_punish,
-            everview_punish, move_reward, move_punish,
-            upsidedown_punish, touch_reward, con_reward
+            person_detec_reward * 10,     # 人像偵測獎勵
+            dis_reward * 15,              # 接近目標獎勵
+            dis_punish * 7.5,             # 遠離目標懲罰
+            inview_reward * 5,            # 目標在視野內獎勵
+            viewdis_reward * 8,           # 目標接近視野中心獎勵
+            viewdis_punish * 4,           # 目標遠離視野中心懲罰
+            everview_punish * 8,          # 失去目標視野懲罰
+            move_reward * 2,              # 移動獎勵
+            move_punish * 8,              # 移動距離懲罰
+            upsidedown_punish * 12,       # 翻倒懲罰
+            touch_reward * 150,           # 碰觸目標獎勵
+            con_reward * 1.5              # 持續碰觸獎勵
         ]
         
-        return reward, reward_list
+        return np.sum(reward_list), reward_list
