@@ -56,7 +56,7 @@ class CrawlerEnv(gym.Env):
         }
         
         # 模型與獎勵函數初始化
-        self.YoloModel = YOLO('yolo/1110_skew.pt', verbose=False)
+        self.YoloModel = YOLO('yolo/1220gray.pt', verbose=False)
         self.reward_function = RewardFunction()
         self.layer_outputs = None
         
