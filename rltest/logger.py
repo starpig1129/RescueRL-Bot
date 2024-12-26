@@ -241,11 +241,11 @@ class TrainLog:
                 reward_info = [
                     ["獎勵詳細資訊 (1)",
                      f"人物偵測: {self._colored_value(self.training_stats['person_detection'])}",
-                     f"距離增加: {self._colored_value(self.training_stats['distance_reward'])}",
-                     f"距離減少: {self._colored_value(self.training_stats['distance_penalty'])}",
-                     f"視野內: {self._colored_value(self.training_stats['inview_reward'])}",
-                     f"視距增加: {self._colored_value(self.training_stats['viewdist_reward'])}",
-                     f"視距減少: {self._colored_value(self.training_stats['viewdist_penalty'])}"]
+                     f"接近目標: {self._colored_value(self.training_stats['distance_reward'])}",
+                     f"遠離目標: {self._colored_value(self.training_stats['distance_penalty'])}",
+                     f"在視野內: {self._colored_value(self.training_stats['inview_reward'])}",
+                     f"視距獎勵: {self._colored_value(self.training_stats['viewdist_reward'])}",
+                     f"視距懲罰: {self._colored_value(self.training_stats['viewdist_penalty'])}"]
                 ]
                 
                 reward_info2 = [
