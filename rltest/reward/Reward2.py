@@ -208,7 +208,7 @@ class RewardFunction:
             person_detec_reward * 10,     # 人像偵測獎勵
             dis_reward * 15,              # 接近目標獎勵
             dis_punish * 7.5,             # 遠離目標懲罰
-            inview_reward * 5,            # 目標在視野內獎勵
+            inview_reward * 3,            # 目標在視野內獎勵
             viewdis_reward * 8,           # 目標接近視野中心獎勵
             viewdis_punish * 4,           # 目標遠離視野中心懲罰
             everview_punish * 8,          # 失去目標視野懲罰
