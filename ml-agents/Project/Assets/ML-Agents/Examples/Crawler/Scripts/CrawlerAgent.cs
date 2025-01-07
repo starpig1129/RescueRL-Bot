@@ -78,6 +78,15 @@ public class CrawlerAgent : Agent
     private const float UPSIDE_DOWN_ANGLE_THRESHOLD = 60f;  // 超過60度視為翻倒
     private bool isCountingForReset = false;  // 是否開始重置計時
 
+    // 卡住檢測相關變量
+    private Vector3 lastPosition;  // 上一次的位置
+    private float stuckTimer = 0f;  // 卡住的計時器
+    private float stuckCheckTimer = 0f;  // 檢查卡住的計時器
+    private const float STUCK_CHECK_INTERVAL = 0.5f;  // 每0.5秒檢查一次
+    private const float STUCK_DISTANCE_THRESHOLD = 0.5f;  // 移動距離小於0.1視為卡住
+    private const float STUCK_TIME_THRESHOLD = 5f;  // 卡住5秒後重置
+    private bool isCheckingStuck = false;  // 是否正在檢查卡住狀態
+
     private const int MAX_RETRY_ATTEMPTS = 3;
     private const int RETRY_DELAY_MS = 100;
     private int currentEpoch = 0;
@@ -88,6 +97,9 @@ public class CrawlerAgent : Agent
         m_OrientationCube = GetComponentInChildren<OrientationCubeController>();
         m_DirectionIndicator = GetComponentInChildren<DirectionIndicator>();
         m_JdController = GetComponent<JointDriveController>();
+
+        // 初始化位置追蹤
+        lastPosition = body.position;
 
         // 設置每個身體部位
         m_JdController.SetupBodyPart(body);
@@ -219,6 +231,12 @@ public class CrawlerAgent : Agent
         continuousUpsideDownTimer = 0f;
         isCountingForReset = false;
 
+        // 重置卡住檢測相關狀態
+        stuckTimer = 0f;
+        stuckCheckTimer = 0f;
+        isCheckingStuck = false;
+        lastPosition = body.position;
+
         foreach (var bodyPart in m_JdController.bodyPartsDict.Values)
         {
             bodyPart.Reset(bodyPart);
@@ -333,6 +351,8 @@ public class CrawlerAgent : Agent
         UpdateOrientationObjects();
         // 檢查是否翻倒
         CheckUpsideDown();
+        // 檢查是否卡住
+        CheckStuck();
         // 如果啟用，當腳接地時，腳會亮起綠色。
         // 這只是一種視覺化，並不是必須的功能
         if (useFootGroundedVisualization)
@@ -362,7 +382,7 @@ public class CrawlerAgent : Agent
         // 如果完美面對目標方向，此獎勵將接近1，偏差時接近0
         var lookAtTargetReward = (Vector3.Dot(cubeForward, body.forward) + 1) * .5F;
 
-        // 根據翻倒狀態給予獎勵或懲罰
+        // 根據翻倒和卡住狀態給予獎勵或懲罰
         if (currentUpsideDownDuration > 0)
         {
             // 翻倒時給予小額負面獎勵
@@ -372,6 +392,11 @@ public class CrawlerAgent : Agent
         {
             // 進入重置計時後給予更大的負面獎勵
             AddReward(-0.2f * Time.fixedDeltaTime);
+        }
+        if (isCheckingStuck)
+        {
+            // 卡住時給予負面獎勵
+            AddReward(-0.1f * Time.fixedDeltaTime);
         }
 
         AddReward(matchSpeedReward * lookAtTargetReward);
@@ -430,6 +455,45 @@ public class CrawlerAgent : Agent
     public void TouchedTarget()
     {
         AddReward(1f);
+    }
+
+    private void CheckStuck()
+    {
+        stuckCheckTimer += Time.fixedDeltaTime;
+
+        // 每隔一定時間檢查一次
+        if (stuckCheckTimer >= STUCK_CHECK_INTERVAL)
+        {
+            float distance = Vector3.Distance(body.position, lastPosition);
+
+            // 如果移動距離小於閾值，增加卡住計時
+            if (distance < STUCK_DISTANCE_THRESHOLD)
+            {
+                if (!isCheckingStuck)
+                {
+                    isCheckingStuck = true;
+                    Debug.Log("Crawler可能卡住了，開始計時...");
+                }
+                stuckTimer += stuckCheckTimer;
+
+                // 如果卡住時間超過閾值，結束回合
+                if (stuckTimer >= STUCK_TIME_THRESHOLD)
+                {
+                    Debug.Log("Crawler卡住太久，重置回合...");
+                    EndEpisode();
+                }
+            }
+            else
+            {
+                // 如果有足夠的移動，重置計時器
+                stuckTimer = 0f;
+                isCheckingStuck = false;
+            }
+
+            // 更新位置和計時器
+            lastPosition = body.position;
+            stuckCheckTimer = 0f;
+        }
     }
 
     /*test
