@@ -93,8 +93,8 @@ class RewardFunction:
         # 使用距離的相對變化計算獎勵
         if self.previous_dis > 0:
             distance_change = (self.previous_dis - current_dis) / self.previous_dis
-            dis_reward = max(0, distance_change * 2)  # 放大獎勵
-            dis_punish = min(0, distance_change)  # 保持原有懲罰
+            dis_reward = max(0, distance_change * 2)  
+            dis_punish = min(0, distance_change)  
         else:
             dis_reward = 0
             dis_punish = 0

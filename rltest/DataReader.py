@@ -89,13 +89,16 @@ class DataReader:
             # 打開特徵數據檔案
             with h5py.File(feature_file_path, 'r') as feature_file:
                 # 檢查特徵數據集
-                feature_datasets = [
+                temporal_datasets = [
                     'layer_input', 'layer_conv1', 'layer_final_residual',
-                    'layer_feature', 'layer_actor'
+                    'layer_feature'
+                ]
+                non_temporal_datasets = [
+                    'layer_actor', 'temporal_features'
                 ]
                 
                 # 為每個step創建對應的特徵數據字典
-                for dataset in feature_datasets:
+                for dataset in temporal_datasets + non_temporal_datasets:
                     if dataset not in feature_file:
                         print(f"特徵資料集 {dataset} 在 {feature_file_path} 中不存在")
                         return None
@@ -111,10 +114,19 @@ class DataReader:
                         feature_step = step // self.feature_save_interval
                         if feature_step < len(step_mappings) and step_mappings[feature_step] == step:
                             # 該步數有特徵數據，讀取所有特徵
-                            for dataset in feature_datasets:
-                                aligned_data[dataset][i] = feature_file[dataset][feature_step]
+                            # 讀取時序特徵數據
+                            for dataset in temporal_datasets:
+                                if dataset in feature_file:
+                                    aligned_data[dataset][i] = feature_file[dataset][feature_step]  # shape: (10, ...)
+                            
+                            # 讀取非時序特徵數據
+                            for dataset in non_temporal_datasets:
+                                if dataset in feature_file:
+                                    aligned_data[dataset][i] = feature_file[dataset][feature_step]  # shape: (features_dim,)
             
-            print(f"成功讀取世代 {epoch} 的資料範圍，環境和特徵數據已對齊")
+            print(f"成功讀取世代 {epoch} 的資料範圍")
+            print(f"時序特徵維度: 10幀")
+            print(f"環境和特徵數據已對齊")
             return aligned_data
                 
         except Exception as e:

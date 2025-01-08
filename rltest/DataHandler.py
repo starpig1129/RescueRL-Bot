@@ -193,32 +193,38 @@ class DataHandler:
         """創建神經網絡特徵相關的數據集，初始大小為0"""
         self.feature_datasets = {
             'input': self.feature_file.create_dataset(
-                'layer_input', (0, 3, 224, 224),
-                maxshape=(None, 3, 224, 224),
+                'layer_input', (0, 10, 3, 224, 224),  # 增加時序維度
+                maxshape=(None, 10, 3, 224, 224),
                 dtype=np.float32,
                 chunks=True
             ),
             'conv1_output': self.feature_file.create_dataset(
-                'layer_conv1', (0, 64, 112, 112),
-                maxshape=(None, 64, 112, 112),
+                'layer_conv1', (0, 10, 64, 112, 112),  # 增加時序維度
+                maxshape=(None, 10, 64, 112, 112),
                 dtype=np.float32,
                 chunks=True
             ),
             'final_residual_output': self.feature_file.create_dataset(
-                'layer_final_residual', (0, 512, 7, 7),
-                maxshape=(None, 512, 7, 7),
+                'layer_final_residual', (0, 10, 512, 7, 7),  # 增加時序維度
+                maxshape=(None, 10, 512, 7, 7),
                 dtype=np.float32,
                 chunks=True
             ),
             'features_output': self.feature_file.create_dataset(
-                'layer_feature', (0, 512),
-                maxshape=(None, 512),
+                'layer_feature', (0, 10, 512),  # 增加時序維度
+                maxshape=(None, 10, 512),
                 dtype=np.float32,
                 chunks=True
             ),
             'actor_output': self.feature_file.create_dataset(
-                'layer_actor', (0,3),
+                'layer_actor', (0, 3),  # 不需要時序維度，因為是最終輸出
                 maxshape=(None, 3),
+                dtype=np.float32,
+                chunks=True
+            ),
+            'temporal_features': self.feature_file.create_dataset(
+                'temporal_features', (0, 256),  # LSTM輸出的時序特徵
+                maxshape=(None, 256),
                 dtype=np.float32,
                 chunks=True
             ),

@@ -56,49 +56,69 @@ class PretrainedResNet(BaseFeaturesExtractor):
         
         return features
 
+class TemporalModule(nn.Module):
+    """
+    時序處理模組
+    使用LSTM處理連續10幀的特徵序列
+    """
+    def __init__(self, input_dim, hidden_dim=256, num_layers=1):
+        super(TemporalModule, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.lstm = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True
+        )
+        
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, input_dim)
+        output, (hidden, _) = self.lstm(x)
+        # 使用最後一個時間步的輸出
+        return output[:, -1, :]  # shape: (batch_size, hidden_dim)
+
 class CustomActor(nn.Module):
     """
     自定義演員網絡
-    用於根據提取的特徵決定行動
-    包含三個全連接層和 dropout 層以防止過擬合
+    整合時序特徵處理
     """
     def __init__(self, features_dim, action_dim):
         super(CustomActor, self).__init__()
-        self.fc1 = nn.Linear(features_dim, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, action_dim)
-        self.dropout = nn.Dropout(0.5) 
+        self.temporal = TemporalModule(features_dim)
+        self.fc1 = nn.Linear(self.temporal.hidden_dim, 128)
+        self.fc2 = nn.Linear(128, action_dim)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
-        x = self.dropout(F.relu(self.fc1(x)))  
-        x = self.dropout(F.relu(self.fc2(x)))
-        x = self.fc3(x) 
+        # x shape: (batch_size, seq_len, features_dim)
+        x = self.temporal(x)
+        x = self.dropout(F.relu(self.fc1(x)))
+        x = self.fc2(x)
         return x
 
 class CustomCritic(nn.Module):
     """
     自定義評論家網絡
-    用於評估當前狀態的價值
-    架構與演員網絡類似，但輸出為單一值
+    整合時序特徵處理
     """
     def __init__(self, features_dim):
         super(CustomCritic, self).__init__()
-        self.fc1 = nn.Linear(features_dim, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 1)
-        self.dropout = nn.Dropout(0.5)
+        self.temporal = TemporalModule(features_dim)
+        self.fc1 = nn.Linear(self.temporal.hidden_dim, 128)
+        self.fc2 = nn.Linear(128, 1)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
+        # x shape: (batch_size, seq_len, features_dim)
+        x = self.temporal(x)
         x = self.dropout(F.relu(self.fc1(x)))
-        x = self.dropout(F.relu(self.fc2(x)))
-        x = self.fc3(x)  
+        x = self.fc2(x)
         return x
 
 class CustomPolicy(ActorCriticPolicy):
     """
     自定義策略類
-    整合特徵提取器、演員網絡和評論家網絡
-    實現完整的策略網絡功能
+    整合特徵提取器、時序處理、演員網絡和評論家網絡
     """
     def __init__(self, observation_space, action_space, lr_schedule, *args, **kwargs):
         super(CustomPolicy, self).__init__(
@@ -117,6 +137,10 @@ class CustomPolicy(ActorCriticPolicy):
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
         self.action_logits = None
         self.layer_outputs = None
+        
+        # 初始化特徵緩衝區，用於存儲最近10幀的特徵
+        self.feature_buffer = []
+        self.buffer_size = 10
     
     def _get_env(self):
         """
@@ -145,22 +169,54 @@ class CustomPolicy(ActorCriticPolicy):
     def predict_values(self, obs):
         """
         預測給定觀察的價值
+        包含時序特徵處理
         """
         features = self.extract_features(obs)
-        return self.value_net(features)
+        temporal_features = self._get_temporal_features(features)
+        return self.value_net(temporal_features)
+
+    def _get_temporal_features(self, features):
+        """
+        處理特徵緩衝區並返回時序特徵
+        """
+        # 獲取當前特徵的batch size和特徵維度
+        batch_size = features.shape[0]
+        feature_dim = features.shape[1]
+        
+        # 清空特徵緩衝區，確保所有特徵使用相同的batch size
+        self.feature_buffer = []
+        
+        # 添加新特徵到緩衝區
+        self.feature_buffer.append(features)
+        
+        # 用零填充到指定大小
+        padding = torch.zeros((batch_size, feature_dim), 
+                            dtype=features.dtype, 
+                            device=features.device)
+        
+        # 填充剩餘的時間步
+        for _ in range(self.buffer_size - 1):
+            self.feature_buffer.insert(0, padding.clone())  # 使用clone()避免共享內存
+            
+        # 將緩衝區轉換為張量
+        temporal_features = torch.stack(self.feature_buffer, dim=1)  # shape: (batch_size, seq_len, features_dim)
+        return temporal_features
 
     def forward(self, obs, deterministic=False):
         """
         前向傳播函數
         處理觀察並生成行動、價值和對數概率
         """
-        # 提取特徵並儲存層輸出
+        # 提取特徵
         features = self.extract_features(obs)
         self.layer_outputs = self.features_extractor.layer_outputs
         
+        # 獲取時序特徵
+        temporal_features = self._get_temporal_features(features)
+        
         # 獲取行動邏輯值和狀態價值
-        self.action_logits = self.action_net(features)
-        value = self.value_net(features)
+        self.action_logits = self.action_net(temporal_features)
+        value = self.value_net(temporal_features)
         
         # 創建行動分佈
         action_dist = torch.distributions.Categorical(logits=self.action_logits)
@@ -195,9 +251,10 @@ class CustomPolicy(ActorCriticPolicy):
         返回對數概率、熵和價值
         """
         features = self.extract_features(obs)
+        temporal_features = self._get_temporal_features(features)
         
-        action_logits = self.action_net(features)
-        value = self.value_net(features)
+        action_logits = self.action_net(temporal_features)
+        value = self.value_net(temporal_features)
         
         action_dist = torch.distributions.Categorical(logits=action_logits)
         
