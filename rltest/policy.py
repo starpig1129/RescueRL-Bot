@@ -138,9 +138,11 @@ class CustomPolicy(ActorCriticPolicy):
         self.action_logits = None
         self.layer_outputs = None
         
-        # 初始化特徵緩衝區，用於存儲最近10幀的特徵
+        # 初始化特徵緩衝區，用於存儲最近60幀的特徵
         self.feature_buffer = []
-        self.buffer_size = 10
+        self.buffer_size = 60  # 存儲60幀
+        self.sample_interval = 6  # 每6幀取1幀
+        self.temporal_size = 10  # 時序輸入使用10幀
     
     def _get_env(self):
         """
@@ -178,28 +180,28 @@ class CustomPolicy(ActorCriticPolicy):
     def _get_temporal_features(self, features):
         """
         處理特徵緩衝區並返回時序特徵
+        使用純向量操作每6幀取1幀，總共取10幀來觀察前60幀的狀態
         """
         # 獲取當前特徵的batch size和特徵維度
         batch_size = features.shape[0]
         feature_dim = features.shape[1]
         
-        # 清空特徵緩衝區，確保所有特徵使用相同的batch size
-        self.feature_buffer = []
+        # 創建零填充的特徵張量
+        if not hasattr(self, 'feature_buffer_tensor') or self.feature_buffer_tensor.shape[0] != batch_size:
+            self.feature_buffer_tensor = torch.zeros((batch_size, self.buffer_size, feature_dim),
+                                                   dtype=features.dtype,
+                                                   device=features.device)
         
-        # 添加新特徵到緩衝區
-        self.feature_buffer.append(features)
+        # 向左移動特徵緩衝區並添加新特徵
+        self.feature_buffer_tensor = torch.cat([
+            self.feature_buffer_tensor[:, 1:],
+            features.unsqueeze(1)
+        ], dim=1)
         
-        # 用零填充到指定大小
-        padding = torch.zeros((batch_size, feature_dim), 
-                            dtype=features.dtype, 
-                            device=features.device)
+        # 使用步長為6的切片操作選取10幀
+        indices = torch.arange(self.buffer_size - 1, -1, -self.sample_interval, device=features.device)[:self.temporal_size]
+        temporal_features = self.feature_buffer_tensor[:, indices]
         
-        # 填充剩餘的時間步
-        for _ in range(self.buffer_size - 1):
-            self.feature_buffer.insert(0, padding.clone())  # 使用clone()避免共享內存
-            
-        # 將緩衝區轉換為張量
-        temporal_features = torch.stack(self.feature_buffer, dim=1)  # shape: (batch_size, seq_len, features_dim)
         return temporal_features
 
     def forward(self, obs, deterministic=False):
