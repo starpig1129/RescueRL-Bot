@@ -22,8 +22,17 @@ class PretrainedResNet(BaseFeaturesExtractor):
         # 移除原始的全連接層，替換為恆等映射
         resnet.fc = nn.Identity()
         
+        # 確保所有參數可訓練
+        for param in resnet.parameters():
+            param.requires_grad = True
+            
         self.extractor = resnet
         self._features_dim = num_features
+        
+        # 打印參數狀態
+        print("\n特徵提取器參數狀態:")
+        for name, param in self.extractor.named_parameters():
+            print(f"{name}: requires_grad = {param.requires_grad}")
         
         # 初始化用於存儲層輸出的字典
         self.layer_outputs = {}
@@ -48,13 +57,56 @@ class PretrainedResNet(BaseFeaturesExtractor):
         # 儲存輸入
         self.layer_outputs['input'] = observations.detach().cpu().numpy()
         
+        # 監控各層梯度
+        def register_grad_hook(name):
+            def hook(grad):
+                self._log_gradient(grad, name)
+            return hook
+        
+        # 為主要層註冊梯度鉤子
+        if self.training:
+            observations.requires_grad_(True)
+            observations.register_hook(register_grad_hook('input'))
+            
+            # 為 ResNet 的主要層註冊梯度鉤子
+            self.extractor.conv1.weight.register_hook(register_grad_hook('conv1'))
+            for i, layer in enumerate(self.extractor.layer4):
+                layer.conv1.weight.register_hook(register_grad_hook(f'layer4_{i}_conv1'))
+                layer.conv2.weight.register_hook(register_grad_hook(f'layer4_{i}_conv2'))
+        
         # 通過特徵提取器
         features = self.extractor(observations)
         
         # 儲存最終特徵輸出
         self.layer_outputs['features_output'] = features.detach().cpu().numpy()
         
+        # 監控最終特徵梯度
+        if self.training and features.requires_grad:
+            features.register_hook(register_grad_hook('final_features'))
+            
         return features
+        
+    def _log_gradient(self, grad, name):
+        """記錄梯度信息"""
+        if grad is not None:
+            # 計算梯度統計
+            grad_norm = grad.norm().item()
+            grad_mean = grad.mean().item()
+            grad_std = grad.std().item()
+            grad_max = grad.max().item()
+            grad_min = grad.min().item()
+            
+            # 輸出詳細的梯度信息
+            print(f"\n層 {name} 的梯度統計:")
+            print(f"  範數: {grad_norm:.6f}")
+            print(f"  平均值: {grad_mean:.6f}")
+            print(f"  標準差: {grad_std:.6f}")
+            print(f"  最大值: {grad_max:.6f}")
+            print(f"  最小值: {grad_min:.6f}")
+            
+            # 檢查梯度是否過小或消失
+            if grad_norm < 1e-8:
+                print(f"警告: {name} 層的梯度可能消失")
 
 class TemporalModule(nn.Module):
     """
@@ -130,11 +182,21 @@ class CustomPolicy(ActorCriticPolicy):
             features_extractor_class=PretrainedResNet,
             features_extractor_kwargs={'features_dim': 512}
         )
-
+        
         # 初始化網絡組件
         self.action_net = CustomActor(self.features_extractor.features_dim, self.action_space.n)
         self.value_net = CustomCritic(self.features_extractor.features_dim)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule(1))
+        
+        # 設置不同的學習率
+        self.optimizer = torch.optim.Adam([
+            {'params': self.features_extractor.parameters(), 'lr': lr_schedule(1) * 0.1},  # 特徵提取器使用較大學習率
+            {'params': self.action_net.parameters()},
+            {'params': self.value_net.parameters()}
+        ], lr=lr_schedule(1))
+        
+        print("\n優化器設置:")
+        for param_group in self.optimizer.param_groups:
+            print(f"參數組學習率: {param_group['lr']}")
         self.action_logits = None
         self.layer_outputs = None
         
