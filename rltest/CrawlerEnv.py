@@ -39,6 +39,19 @@ class CrawlerEnv(gym.Env):
         self.fps_counter = 0
         self.fps = 0
         
+        # 任務完成記錄
+        self.success_log_file = 'training_results.json'
+        self.found_target = False
+        self.success_step = 0
+        self.start_time = None
+        
+        # 創建或清空記錄檔案
+        with open(self.success_log_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                "training_start": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "epochs": []
+            }, f, indent=2, ensure_ascii=False)
+        
         # 動作空間: 0=左轉(-45°), 1=直走(0°), 2=右轉(45°)
         self.action_space = gym.spaces.Discrete(3)
         self.observation_space = gym.spaces.Box(
@@ -249,6 +262,14 @@ class CrawlerEnv(gym.Env):
                 angle=relative_angle
             )
             
+            # 檢查是否找到目標
+            if not self.found_target and reward_list is not None:
+                if len(reward_data['targets']) > 0:
+                    target_pos = reward_data['targets'][0]['position']
+                    if target_pos['x'] < -5:  # 根據 Reward2.py 中的判斷條件
+                        self.found_target = True
+                        self.success_step = self.step_count
+            
             self.last_reward_list = reward_list.copy() if reward_list is not None else None
             
             if self.should_save:
@@ -282,15 +303,51 @@ class CrawlerEnv(gym.Env):
                 self.logger.log_error(e)
             return None, 0, True, {}
 
+    def _log_epoch_result(self):
+        """記錄世代結果"""
+        # 讀取現有資料
+        with open(self.success_log_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 計算世代執行時間
+        end_time = time.time()
+        duration = end_time - self.start_time if self.start_time else 0
+        
+        # 準備世代資料
+        epoch_data = {
+            "epoch": self.epoch,
+            "success": self.found_target,
+            "total_steps": self.step_count,
+            "success_step": self.success_step if self.found_target else None,
+            "duration_seconds": duration,
+            "fps": self.fps,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # 添加新的世代資料
+        data["epochs"].append(epoch_data)
+        
+        # 更新檔案
+        with open(self.success_log_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
     def reset(self):
         try:
-            if self.epoch > 0 and self.should_save:
-                self.data_handler.close_epoch_file()
+            # 在世代結束時記錄結果
+            if self.epoch > 0:
+                self._log_epoch_result()
+                if self.should_save:
+                    self.data_handler.close_epoch_file()
             self.epoch += 1
             self.step_count = 0
             self.fps_counter = 0
             self.fps = 0
             self.last_update_time = time.time()
+            
+            # 重置任務完成狀態
+            self.found_target = False
+            self.success_step = 0
+            self.start_time = time.time()  # 記錄世代開始時間
             
             # 重置獎勵函數的狀態
             self.reward_function.reset()

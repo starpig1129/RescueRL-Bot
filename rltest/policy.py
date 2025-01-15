@@ -45,6 +45,7 @@ class PretrainedResNet(BaseFeaturesExtractor):
         """
         創建一個鉤子函數來捕獲並存儲指定層的輸出
         """
+        
         def hook(model, input, output):
             self.layer_outputs[name] = output.detach().cpu().numpy()
         return hook
