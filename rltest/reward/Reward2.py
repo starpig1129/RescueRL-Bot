@@ -168,14 +168,14 @@ class RewardFunction:
             return min(1.0, normalized_punishment)
         return 0
 
-    def touch(self, is_touch, crawler_pos):
+    def touch(self, is_touch):
         """
         計算碰觸目標的獎勵，使用 Unity 的碰撞檢測結果
         """
         touch_reward = 0
         con_reward = 0
 
-        # is_touch 現在應該是一個布林值，表示是否發生碰撞
+        # is_touch 是一個布林值，表示是否發生碰撞
         if is_touch:
             touch_reward = 1
             self.con_touch_reward = 100  # 重置持續獎勵
@@ -226,14 +226,14 @@ class RewardFunction:
         target_pos, target_view_pos = self.target(reward_data)
         rotation = reward_data['rotation']
         is_touch = reward_data.get('is_colliding', False)  # 從 reward_data 中獲取碰撞狀態
-        print(f"碰撞狀態: {is_touch}")
         person_detec_reward = self.person_detec_reward(results)
         dis_reward, dis_punish = self.distance_reward(crawler_pos, target_pos)
         inview_reward, viewdis_reward, viewdis_punish, everview_punish = self.person_in_view_reward(target_view_pos)
         move_reward, move_punish = self.move_reward(crawler_pos)
         upsidedown_punish = self.is_up(rotation)
-        touch_reward, con_reward = self.touch(is_touch, crawler_pos)
-
+        touch_reward, con_reward = self.touch(is_touch)
+        if is_touch:
+            print(is_touch,touch_reward)
         # 調整獎勵權重
         reward_list = [
             person_detec_reward * 10,     # 人像偵測獎勵
