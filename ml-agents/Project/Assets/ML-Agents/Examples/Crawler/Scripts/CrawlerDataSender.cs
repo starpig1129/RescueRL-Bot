@@ -92,8 +92,10 @@ public class CrawlerDataSender : MonoBehaviour
 
     private object PrepareData()
     {
-        Vector3 crawlerPosition = transform.position;
-        Vector3 crawlerRotation = transform.eulerAngles; // 使用歐拉角度
+        // 獲取 Rigidbody 組件以取得精確的物理位置和旋轉
+        Rigidbody rb = GetComponent<Rigidbody>();
+        Vector3 crawlerPosition = rb.position;
+        Vector3 crawlerRotation = rb.rotation.eulerAngles;
         GameObject[] targetObjects = GameObject.FindGameObjectsWithTag(targetTag);
 
         var targetDataList = new List<object>();

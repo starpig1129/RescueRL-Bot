@@ -20,12 +20,11 @@ class RewardFunction:
         
         # 碰觸獎勵相關變數
         self.con_touch_reward = 0     # 持續碰觸獎勵
-        self.target1_reward = True    # 目標1是否可獲得獎勵
-        self.target2_reward = True    # 目標2是否可獲得獎勵
-        self.target3_reward = True    # 目標3是否可獲得獎勵
+        self.target_rewards = {}      # 使用字典管理目標獎勵狀態
+        self.TOUCH_THRESHOLD = 5.0    # 碰觸判定閾值
 
         # 移動距離歷史記錄
-        self.movement_history = []    # 儲存最近200步的移動距離
+        self.movement_history = []    # 儲存最近150步的移動距離
         
         # 新增: 追蹤連續看見目標的次數
         self.continuous_view_count = 0
@@ -83,17 +82,21 @@ class RewardFunction:
 
     def distance_reward(self, point1, point2):
         """
-        計算實體距離相關的獎勵，使用連續性獎勵函數
+        計算實體距離相關的獎勵，忽略高度差距，只考慮水平面（x-z平面）的距離
         """
-        x1, y1, z1 = float(point1['x']), float(point1['y']), float(point1['z'])
-        x2, y2, z2 = float(point2[0]), float(point2[1]), float(point2[2])
+        # 只使用 x 和 z 座標計算距離，忽略 y 座標
+        x1, z1 = float(point1['x']), float(point1['z'])
+        x2, z2 = float(point2['x']), float(point2['z'])
 
-        current_dis = ((x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2) ** 0.5
+        # 計算水平面上的距離
+        current_dis = ((x1 - x2) ** 2 + (z1 - z2) ** 2) ** 0.5
         
         # 使用距離的相對變化計算獎勵
         if self.previous_dis > 0:
             distance_change = (self.previous_dis - current_dis) / self.previous_dis
-            dis_reward = max(0, distance_change * 2)  
+            # 增加接近目標的獎勵
+            dis_reward = max(0, distance_change)
+            # 減少遠離目標的懲罰
             dis_punish = min(0, distance_change)  
         else:
             dis_reward = 0
@@ -104,10 +107,12 @@ class RewardFunction:
 
     def move_reward(self, point1):
         """
-        計算移動相關的獎勵，使用自適應閾值
+        計算移動相關的獎勵，使用 Rigidbody position 計算實際移動距離
         """
         x1, z1 = point1['x'], point1['z']
         last_x, last_z = self.lastposition[0], self.lastposition[2]
+        
+        # 計算實際的物理移動距離
         movedis = ((x1 - last_x) ** 2 + (z1 - last_z) ** 2) ** 0.5
         
         self.movement_history.append(movedis)
@@ -127,7 +132,7 @@ class RewardFunction:
             
             # 使用改進的sigmoid函數計算懲罰
             total_movement = sum(self.movement_history)
-            move_punish = -1 / (1 + np.exp((total_movement - 5) / 2))  # 調整曲線斜率
+            move_punish = -1 / (1 + np.exp((total_movement - 5) / 2))
         else:
             move_reward = 0
             move_punish = 0
@@ -135,32 +140,65 @@ class RewardFunction:
         self.lastposition = [x1, self.lastposition[1], z1]
         return move_reward, move_punish
 
-    def is_up(self, up):
+    def is_up(self, rotation):
         """
-        計算姿態相關的懲罰，使用連續性懲罰
+        計算姿態相關的懲罰，使用 Rigidbody rotation 歐拉角度
         """
-        y_value = up.get('y', 1)
-        if y_value < 0:
-            # 根據傾斜程度給予不同程度的懲罰
-            return min(1.0, abs(y_value))
+        # 獲取 x 和 z 軸的旋轉角度
+        x_rotation = rotation.get('x', 0) % 360
+        z_rotation = rotation.get('z', 0) % 360
+        
+        # 計算與正常姿態的偏差（正常姿態應該是x和z接近0度）
+        x_deviation = min(x_rotation, 360 - x_rotation)
+        z_deviation = min(z_rotation, 360 - z_rotation)
+        
+        # 綜合考慮兩個軸的偏差，當任一軸偏差超過45度時給予懲罰
+        max_deviation = max(x_deviation, z_deviation)
+        if max_deviation > 45:
+            # 將偏差映射到0-1的懲罰值
+            normalized_punishment = (max_deviation - 45) / 135  # (180-45=135)
+            return min(1.0, normalized_punishment)
         return 0
 
     def touch(self, is_touch):
         """
-        計算碰觸目標的獎勵，使用指數衰減
+        計算碰觸目標的獎勵，只考慮水平面（x-z平面）的距離
         """
         touch_reward = 0
         con_reward = 0
 
-        if is_touch[0]['x'] < -5 and self.target1_reward:
-            self.target1_reward = False
-            touch_reward = 1
-            self.con_touch_reward = 100
+        for i, target_pos in enumerate(is_touch):
+            target_id = f"target_{i}"
+            
+            # 初始化目標獎勵狀態
+            if target_id not in self.target_rewards:
+                self.target_rewards[target_id] = True
+                
+            # 檢查是否可獲得獎勵
+            if self.target_rewards[target_id]:
+                # 只計算水平面上的距離，忽略y軸
+                distance = np.sqrt(
+                    target_pos['x']**2 + 
+                    target_pos['z']**2
+                )
+                
+                # 判定是否碰觸（使用水平距離）
+                if distance < self.TOUCH_THRESHOLD:
+                    self.target_rewards[target_id] = False
+                    touch_reward = 1
+                    self.con_touch_reward = 100  # 重置持續獎勵
+                    break
         
-        # 使用指數衰減而不是線性衰減
+        # 動態調整持續獎勵
         if self.con_touch_reward > 0:
+            # 計算剩餘未碰觸目標數
+            remaining_targets = sum(1 for v in self.target_rewards.values() if v)
+            # 根據剩餘目標調整衰減率
+            decay_rate = 0.95 + (remaining_targets * 0.01)
+            
             con_reward = self.con_touch_reward
-            self.con_touch_reward *= 0.95  # 每次衰減5%
+            self.con_touch_reward *= decay_rate
+            
             if self.con_touch_reward < 1:
                 self.con_touch_reward = 0
 
@@ -168,23 +206,25 @@ class RewardFunction:
 
     def target(self, reward_data):
         """
-        找出最近的目標
+        找出最近的目標，只考慮水平面（x-z平面）的距離
         """
+        # 只使用 x 和 z 座標
         crawler_position = np.array([
             reward_data['position']['x'],
-            reward_data['position']['y'],
             reward_data['position']['z']
         ])
         
         targets = reward_data['targets']
         target_positions = [
-            np.array([t['position']['x'], t['position']['y'], t['position']['z']])
+            np.array([t['position']['x'], t['position']['z']])
             for t in targets
         ]
         
+        # 使用歐幾里德距離計算水平面距離
         distances = [np.linalg.norm(crawler_position - pos) for pos in target_positions]
         nearest_idx = np.argmin(distances)
         
+        # 返回完整的目標位置和螢幕座標
         return target_positions[nearest_idx], targets[nearest_idx]['screenPosition']
 
     def get_reward(self, results, reward_data, angle):
@@ -193,14 +233,14 @@ class RewardFunction:
         """
         point1 = reward_data['position']
         point2, view = self.target(reward_data)
-        up = reward_data['rotation']
+        rotation = reward_data['rotation']
         is_touch = [target['position'] for target in reward_data['targets']]
-
+        
         person_detec_reward = self.person_detec_reward(results)
         dis_reward, dis_punish = self.distance_reward(point1, point2)
         inview_reward, viewdis_reward, viewdis_punish, everview_punish = self.person_in_view_reward(view)
         move_reward, move_punish = self.move_reward(point1)
-        upsidedown_punish = self.is_up(up)
+        upsidedown_punish = self.is_up(rotation)
         touch_reward, con_reward = self.touch(is_touch)
 
         # 調整獎勵權重
@@ -216,7 +256,7 @@ class RewardFunction:
             move_punish * 8,              # 移動距離懲罰
             upsidedown_punish * 12,       # 翻倒懲罰
             touch_reward * 150,           # 碰觸目標獎勵
-            con_reward * 1.5              # 持續碰觸獎勵
+            con_reward * 0                # 持續碰觸獎勵
         ]
         
         return np.sum(reward_list), reward_list
