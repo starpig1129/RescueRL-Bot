@@ -11,7 +11,7 @@ public class CrawlerDataSender : MonoBehaviour
     private TcpClient client;
     private NetworkStream stream;
     public Camera crawlerCamera;
-    public string targetTag = "TargetObject";
+    public string targetTag = "target"; // 改為檢測 target tag
     private bool isConnected = false;
     private float sendInterval = 0.03f;
 
@@ -90,13 +90,29 @@ public class CrawlerDataSender : MonoBehaviour
         }
     }
 
-    private bool isColliding = false;  // 新增碰撞狀態變數
+    private bool isColliding = false;  // 碰撞狀態變數
+    private float collisionTime = 0f;  // 記錄碰撞開始時間
+    private const float MIN_COLLISION_TIME = 0.1f; // 最小碰撞持續時間
 
     private void OnCollisionEnter(Collision collision)
     {
         if (collision.gameObject.CompareTag(targetTag))
         {
             isColliding = true;
+            collisionTime = Time.time;
+            Debug.Log($"碰撞開始: isColliding = {isColliding}, time = {collisionTime}");
+        }
+    }
+
+    private void OnCollisionStay(Collision collision)
+    {
+        if (collision.gameObject.CompareTag(targetTag))
+        {
+            // 確保碰撞狀態持續一段時間
+            if (Time.time - collisionTime >= MIN_COLLISION_TIME)
+            {
+                isColliding = true;
+            }
         }
     }
 
@@ -105,6 +121,28 @@ public class CrawlerDataSender : MonoBehaviour
         if (collision.gameObject.CompareTag(targetTag))
         {
             isColliding = false;
+            Debug.Log($"碰撞結束: isColliding = {isColliding}, duration = {Time.time - collisionTime}");
+        }
+    }
+
+    private void OnEnable()
+    {
+        isColliding = false;
+        collisionTime = 0f;
+    }
+
+    private void OnDisable()
+    {
+        isColliding = false;
+        collisionTime = 0f;
+    }
+
+    private void FixedUpdate()
+    {
+        // 在物理更新時檢查並更新碰撞狀態
+        if (isColliding && Time.time - collisionTime < MIN_COLLISION_TIME)
+        {
+            Debug.Log($"保持碰撞狀態: duration = {Time.time - collisionTime}");
         }
     }
 

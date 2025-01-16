@@ -41,7 +41,7 @@ class CrawlerEnv(gym.Env):
         self.done = False
         
         # 任務完成記錄
-        self.success_log_file = 'training_results.csv'
+        self.success_log_file = 'E:/train_log0115/training_results.csv'
         self.found_target = False
         self.success_step = 0
         self.start_time = None  # 初始化世代開始時間變數

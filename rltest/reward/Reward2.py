@@ -179,6 +179,10 @@ class RewardFunction:
         if is_touch:
             touch_reward = 1
             self.con_touch_reward = 100  # 重置持續獎勵
+        else:
+            # 當不再碰觸時，重置持續獎勵
+            self.con_touch_reward = 0
+            return 0, 0
         
         # 動態調整持續獎勵
         if self.con_touch_reward > 0:
@@ -232,8 +236,6 @@ class RewardFunction:
         move_reward, move_punish = self.move_reward(crawler_pos)
         upsidedown_punish = self.is_up(rotation)
         touch_reward, con_reward = self.touch(is_touch)
-        if is_touch:
-            print(is_touch,touch_reward)
         # 調整獎勵權重
         reward_list = [
             person_detec_reward * 10,     # 人像偵測獎勵
