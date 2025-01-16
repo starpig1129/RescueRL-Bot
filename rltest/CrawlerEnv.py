@@ -38,19 +38,17 @@ class CrawlerEnv(gym.Env):
         self.step_count = 0
         self.fps_counter = 0
         self.fps = 0
+        self.done = False
         
         # 任務完成記錄
-        self.success_log_file = 'training_results.json'
+        self.success_log_file = 'training_results.csv'
         self.found_target = False
         self.success_step = 0
-        self.start_time = None
+        self.start_time = None  # 初始化世代開始時間變數
         
         # 創建或清空記錄檔案
         with open(self.success_log_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                "training_start": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "epochs": []
-            }, f, indent=2, ensure_ascii=False)
+            f.write("世代,是否成功,總步數,成功步數,執行時間\n")
         
         # 動作空間: 0=左轉(-45°), 1=直走(0°), 2=右轉(45°)
         self.action_space = gym.spaces.Discrete(3)
@@ -77,7 +75,7 @@ class CrawlerEnv(gym.Env):
         self._init_socket_vars()
         
         # 資料處理相關設置
-        base_dir = "test_logs" if test_mode else "train_logs"
+        base_dir = "test_logs" if test_mode else "E:/train_log0115"
         self.logger = TrainLog()
         self.data_handler = DataHandler(
             base_dir=base_dir,
@@ -264,11 +262,10 @@ class CrawlerEnv(gym.Env):
             
             # 檢查是否找到目標
             if not self.found_target and reward_list is not None:
-                if len(reward_data['targets']) > 0:
-                    target_pos = reward_data['targets'][0]['position']
-                    if target_pos['x'] < -5:  # 根據 Reward2.py 中的判斷條件
-                        self.found_target = True
-                        self.success_step = self.step_count
+                touch_reward = reward_list[10]  # touch_reward 的 index 是 10
+                if touch_reward > 0 :
+                    self.found_target = True
+                    self.success_step = self.step_count
             
             self.last_reward_list = reward_list.copy() if reward_list is not None else None
             
@@ -289,9 +286,9 @@ class CrawlerEnv(gym.Env):
                         self.logger.log_error(e)
             
             processed_obs = self.preprocess_observation(obs)
-            done = self.reset_event.is_set()
+            self.done = self.reset_event.is_set()
             
-            return processed_obs, reward, done, {
+            return processed_obs, reward, self.done, {
                 'reward_list': reward_list,
                 'fps': self.fps,
                 'step': self.step_count,
@@ -305,31 +302,11 @@ class CrawlerEnv(gym.Env):
 
     def _log_epoch_result(self):
         """記錄世代結果"""
-        # 讀取現有資料
-        with open(self.success_log_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # 計算世代執行時間
-        end_time = time.time()
-        duration = end_time - self.start_time if self.start_time else 0
-        
-        # 準備世代資料
-        epoch_data = {
-            "epoch": self.epoch,
-            "success": self.found_target,
-            "total_steps": self.step_count,
-            "success_step": self.success_step if self.found_target else None,
-            "duration_seconds": duration,
-            "fps": self.fps,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        # 添加新的世代資料
-        data["epochs"].append(epoch_data)
-        
-        # 更新檔案
-        with open(self.success_log_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        with open(self.success_log_file, 'a', encoding='utf-8') as f:
+            success_str = "1" if self.found_target else "0"
+            success_step_str = str(self.success_step) if self.found_target else ""
+            duration = time.time() - self.start_time if self.start_time else 0
+            f.write(f"{self.epoch},{success_str},{self.step_count},{success_step_str},{duration:.1f}\n")
 
     def reset(self):
         try:
@@ -585,9 +562,9 @@ if __name__ == "__main__":
         
         while True:
             obs = env.reset()
-            done = False
-            while not done:
+            env.done = False
+            while not env.done:
                 action = env.action_space.sample()
-                obs, reward, done, info = env.step(action)
+                obs, reward, env.done, info = env.step(action)
     finally:
         env.close()
