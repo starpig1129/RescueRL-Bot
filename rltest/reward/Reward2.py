@@ -84,9 +84,17 @@ class RewardFunction:
         """
         計算實體距離相關的獎勵，忽略高度差距，只考慮水平面（x-z平面）的距離
         """
-        # 只使用 x 和 z 座標計算距離，忽略 y 座標
-        x1, z1 = float(point1['x']), float(point1['z'])
-        x2, z2 = float(point2['x']), float(point2['z'])
+        # 處理 point1 為字典的情況
+        if isinstance(point1, dict):
+            x1, z1 = float(point1['x']), float(point1['z'])
+        else:  # 處理 numpy array 的情況
+            x1, z1 = float(point1[0]), float(point1[1])
+            
+        # 處理 point2 為字典或 numpy array 的情況
+        if isinstance(point2, dict):
+            x2, z2 = float(point2['x']), float(point2['z'])
+        else:  # numpy array
+            x2, z2 = float(point2[0]), float(point2[1])
 
         # 計算水平面上的距離
         current_dis = ((x1 - x2) ** 2 + (z1 - z2) ** 2) ** 0.5
@@ -160,7 +168,7 @@ class RewardFunction:
             return min(1.0, normalized_punishment)
         return 0
 
-    def touch(self, is_touch):
+    def touch(self, is_touch, crawler_pos):
         """
         計算碰觸目標的獎勵，只考慮水平面（x-z平面）的距離
         """
@@ -176,12 +184,11 @@ class RewardFunction:
                 
             # 檢查是否可獲得獎勵
             if self.target_rewards[target_id]:
-                # 只計算水平面上的距離，忽略y軸
-                distance = np.sqrt(
-                    target_pos['x']**2 + 
-                    target_pos['z']**2
-                )
-                
+                # 計算相對距離（水平面）
+                dx = target_pos['x'] - crawler_pos['x']
+                dz = target_pos['z'] - crawler_pos['z']
+                distance = np.sqrt(dx**2 + dz**2)
+                print(distance)
                 # 判定是否碰觸（使用水平距離）
                 if distance < self.TOUCH_THRESHOLD:
                     self.target_rewards[target_id] = False
@@ -231,17 +238,17 @@ class RewardFunction:
         """
         計算總體獎勵值，調整獎勵權重
         """
-        point1 = reward_data['position']
-        point2, view = self.target(reward_data)
+        crawler_pos = reward_data['position']
+        target_pos, target_view_pos = self.target(reward_data)
         rotation = reward_data['rotation']
         is_touch = [target['position'] for target in reward_data['targets']]
         
         person_detec_reward = self.person_detec_reward(results)
-        dis_reward, dis_punish = self.distance_reward(point1, point2)
-        inview_reward, viewdis_reward, viewdis_punish, everview_punish = self.person_in_view_reward(view)
-        move_reward, move_punish = self.move_reward(point1)
+        dis_reward, dis_punish = self.distance_reward(crawler_pos, target_pos)
+        inview_reward, viewdis_reward, viewdis_punish, everview_punish = self.person_in_view_reward(target_view_pos)
+        move_reward, move_punish = self.move_reward(crawler_pos)
         upsidedown_punish = self.is_up(rotation)
-        touch_reward, con_reward = self.touch(is_touch)
+        touch_reward, con_reward = self.touch(is_touch, crawler_pos)
 
         # 調整獎勵權重
         reward_list = [
