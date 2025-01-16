@@ -46,9 +46,10 @@ class CrawlerEnv(gym.Env):
         self.success_step = 0
         self.start_time = None  # 初始化世代開始時間變數
         
-        # 創建或清空記錄檔案
-        with open(self.success_log_file, 'w', encoding='utf-8') as f:
-            f.write("世代,是否成功,總步數,成功步數,執行時間\n")
+        # 如果記錄檔案不存在，則建立並寫入標題列
+        if not os.path.exists(self.success_log_file):
+            with open(self.success_log_file, 'w', encoding='utf-8') as f:
+                f.write("世代,是否成功,總步數,成功步數,執行時間\n")
         
         # 動作空間: 0=左轉(-45°), 1=直走(0°), 2=右轉(45°)
         self.action_space = gym.spaces.Discrete(3)
