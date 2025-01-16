@@ -500,10 +500,11 @@ class DataHandler:
                     final_env_steps = self.current_max_steps
                     self._log_info(f"環境數據最終步數: {final_env_steps}")
                     
-                    # 關閉文件前確認所有數據都已寫入
-                    self.env_file.flush()
-                    self.env_file.close()
-                    self._log_info("環境數據文件已關閉")
+                    # 確保文件仍然打開再進行操作
+                    if self.env_file and hasattr(self.env_file, 'id'):
+                        self.env_file.flush()
+                        self.env_file.close()
+                        self._log_info("環境數據文件已關閉")
                 except Exception as e:
                     self._log_error(e)
             
@@ -513,10 +514,11 @@ class DataHandler:
                     final_feature_steps = self.current_max_feature_steps
                     self._log_info(f"特徵數據最終步數: {final_feature_steps}")
                     
-                    # 關閉文件前確認所有數據都已寫入
-                    self.feature_file.flush()
-                    self.feature_file.close()
-                    self._log_info("特徵數據文件已關閉")
+                    # 確保文件仍然打開再進行操作
+                    if self.feature_file and hasattr(self.feature_file, 'id'):
+                        self.feature_file.flush()
+                        self.feature_file.close()
+                        self._log_info("特徵數據文件已關閉")
                 except Exception as e:
                     self._log_error(e)
             
