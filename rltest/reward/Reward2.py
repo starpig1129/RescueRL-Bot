@@ -170,31 +170,15 @@ class RewardFunction:
 
     def touch(self, is_touch, crawler_pos):
         """
-        計算碰觸目標的獎勵，只考慮水平面（x-z平面）的距離
+        計算碰觸目標的獎勵，使用 Unity 的碰撞檢測結果
         """
         touch_reward = 0
         con_reward = 0
 
-        for i, target_pos in enumerate(is_touch):
-            target_id = f"target_{i}"
-            
-            # 初始化目標獎勵狀態
-            if target_id not in self.target_rewards:
-                self.target_rewards[target_id] = True
-                
-            # 檢查是否可獲得獎勵
-            if self.target_rewards[target_id]:
-                # 計算相對距離（水平面）
-                dx = target_pos['x'] - crawler_pos['x']
-                dz = target_pos['z'] - crawler_pos['z']
-                distance = np.sqrt(dx**2 + dz**2)
-                print(distance)
-                # 判定是否碰觸（使用水平距離）
-                if distance < self.TOUCH_THRESHOLD:
-                    self.target_rewards[target_id] = False
-                    touch_reward = 1
-                    self.con_touch_reward = 100  # 重置持續獎勵
-                    break
+        # is_touch 現在應該是一個布林值，表示是否發生碰撞
+        if is_touch:
+            touch_reward = 1
+            self.con_touch_reward = 100  # 重置持續獎勵
         
         # 動態調整持續獎勵
         if self.con_touch_reward > 0:
@@ -241,8 +225,8 @@ class RewardFunction:
         crawler_pos = reward_data['position']
         target_pos, target_view_pos = self.target(reward_data)
         rotation = reward_data['rotation']
-        is_touch = [target['position'] for target in reward_data['targets']]
-        
+        is_touch = reward_data.get('is_colliding', False)  # 從 reward_data 中獲取碰撞狀態
+        print(f"碰撞狀態: {is_touch}")
         person_detec_reward = self.person_detec_reward(results)
         dis_reward, dis_punish = self.distance_reward(crawler_pos, target_pos)
         inview_reward, viewdis_reward, viewdis_punish, everview_punish = self.person_in_view_reward(target_view_pos)

@@ -90,6 +90,24 @@ public class CrawlerDataSender : MonoBehaviour
         }
     }
 
+    private bool isColliding = false;  // 新增碰撞狀態變數
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (collision.gameObject.CompareTag(targetTag))
+        {
+            isColliding = true;
+        }
+    }
+
+    private void OnCollisionExit(Collision collision)
+    {
+        if (collision.gameObject.CompareTag(targetTag))
+        {
+            isColliding = false;
+        }
+    }
+
     private object PrepareData()
     {
         // 獲取 Rigidbody 組件以取得精確的物理位置和旋轉
@@ -124,7 +142,8 @@ public class CrawlerDataSender : MonoBehaviour
         {
             position = new { x = crawlerPosition.x, y = crawlerPosition.y, z = crawlerPosition.z },
             rotation = new { x = crawlerRotation.x, y = crawlerRotation.y, z = crawlerRotation.z },
-            targets = targetDataList
+            targets = targetDataList,
+            is_colliding = isColliding  // 添加碰撞狀態到傳送數據中
         };
     }
 
