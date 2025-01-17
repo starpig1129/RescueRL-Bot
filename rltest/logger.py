@@ -25,18 +25,18 @@ class TrainLog:
             'estimated_time': 0.0,
             'mean_reward': 0.0,
             'progress_bar': '',
-            'person_detection': 0.0,
-            'distance_reward': 0.0,
-            'distance_penalty': 0.0,
-            'inview_reward': 0.0,
-            'viewdist_reward': 0.0,
-            'viewdist_penalty': 0.0,
-            'lost_view_penalty': 0.0,
-            'movement_reward': 0.0,
-            'movement_penalty': 0.0,
-            'upside_down_penalty': 0.0,
-            'touch_reward': 0.0,
-            'continuous_reward': 0.0,
+            'person_detection': 0.0,        # 人像偵測獎勵
+            'approach_reward': 0.0,         # 接近目標獎勵
+            'leave_penalty': 0.0,           # 遠離目標懲罰
+            'inview_reward': 0.0,           # 目標在視野內獎勵
+            'center_approach': 0.0,         # 目標接近視野中心獎勵
+            'center_leave': 0.0,            # 目標遠離視野中心懲罰
+            'lost_view': 0.0,               # 失去目標視野懲罰
+            'movement_reward': 0.0,         # 移動獎勵
+            'movement_penalty': 0.0,        # 移動距離懲罰
+            'posture_penalty': 0.0,         # 姿態偏差懲罰
+            'touch_reward': 0.0,            # 碰觸目標獎勵
+            'continuous_reward': 0.0,       # 持續碰觸獎勵
         }
         
         # 數據處理相關統計資料
@@ -166,10 +166,18 @@ class TrainLog:
                 
                 if reward_list is not None:
                     reward_names = [
-                        'person_detection', 'distance_reward', 'distance_penalty',
-                        'inview_reward', 'viewdist_reward', 'viewdist_penalty',
-                        'lost_view_penalty', 'movement_reward', 'movement_penalty',
-                        'upside_down_penalty', 'touch_reward', 'continuous_reward'
+                        'person_detection',   # 人像偵測獎勵
+                        'approach_reward',    # 接近目標獎勵
+                        'leave_penalty',      # 遠離目標懲罰
+                        'inview_reward',      # 目標在視野內獎勵
+                        'center_approach',    # 目標接近視野中心獎勵
+                        'center_leave',       # 目標遠離視野中心懲罰
+                        'lost_view',          # 失去目標視野懲罰
+                        'movement_reward',    # 移動獎勵
+                        'movement_penalty',   # 移動距離懲罰
+                        'posture_penalty',    # 姿態偏差懲罰
+                        'touch_reward',       # 碰觸目標獎勵
+                        'continuous_reward'   # 持續碰觸獎勵
                     ]
                     for name, value in zip(reward_names, reward_list):
                         self.training_stats[name] = value
@@ -241,19 +249,19 @@ class TrainLog:
                 reward_info = [
                     ["獎勵詳細資訊 (1)",
                      f"人物偵測: {self._colored_value(self.training_stats['person_detection'])}",
-                     f"接近目標: {self._colored_value(self.training_stats['distance_reward'])}",
-                     f"遠離目標: {self._colored_value(self.training_stats['distance_penalty'])}",
+                     f"接近目標: {self._colored_value(self.training_stats['approach_reward'])}",
+                     f"遠離目標: {self._colored_value(self.training_stats['leave_penalty'])}",
                      f"在視野內: {self._colored_value(self.training_stats['inview_reward'])}",
-                     f"視距獎勵: {self._colored_value(self.training_stats['viewdist_reward'])}",
-                     f"視距懲罰: {self._colored_value(self.training_stats['viewdist_penalty'])}"]
+                     f"接近中心: {self._colored_value(self.training_stats['center_approach'])}",
+                     f"遠離中心: {self._colored_value(self.training_stats['center_leave'])}"]
                 ]
                 
                 reward_info2 = [
                     ["獎勵詳細資訊 (2)",
-                     f"失去視野: {self._colored_value(self.training_stats['lost_view_penalty'])}",
+                     f"失去視野: {self._colored_value(self.training_stats['lost_view'])}",
                      f"移動獎勵: {self._colored_value(self.training_stats['movement_reward'])}",
                      f"移動懲罰: {self._colored_value(self.training_stats['movement_penalty'])}",
-                     f"翻倒懲罰: {self._colored_value(self.training_stats['upside_down_penalty'])}",
+                     f"姿態懲罰: {self._colored_value(self.training_stats['posture_penalty'])}",
                      f"觸碰獎勵: {self._colored_value(self.training_stats['touch_reward'])}",
                      f"持續獎勵: {self._colored_value(self.training_stats['continuous_reward'])}"]
                 ]
@@ -293,7 +301,7 @@ class TrainLog:
         except Exception:
             return "00:00:00"
 
-    def _colored_value(self, value: float, format_spec: str = ".2f") -> str:
+    def _colored_value(self, value: float, format_spec: str = "12.2f") -> str:
         """
         為數值添加顏色
         
@@ -306,7 +314,8 @@ class TrainLog:
         """
         try:
             value = float(value)
-            formatted_value = f"{value:{format_spec}}" if isinstance(format_spec, str) else f"{value:.2f}"
+            # 使用固定寬度格式化,確保有足夠空間顯示大數值
+            formatted_value = f"{value:{format_spec}}" if isinstance(format_spec, str) else f"{value:12.2f}"
             
             if value > 0:
                 return f"{Fore.GREEN}{formatted_value}{Style.RESET_ALL}"
@@ -314,7 +323,7 @@ class TrainLog:
                 return f"{Fore.RED}{formatted_value}{Style.RESET_ALL}"
             return formatted_value
         except (ValueError, TypeError):
-            return "0.00"
+            return "       0.00"  # 保持與其他數值對齊
 
     def log_error(self, error: Exception) -> None:
         """
