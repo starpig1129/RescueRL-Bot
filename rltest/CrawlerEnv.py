@@ -256,9 +256,8 @@ class CrawlerEnv(gym.Env):
                 return None, 0, True, {}
                 
             reward, reward_list = self.reward_function.get_reward(
-                results=results,
+                detection_results=results,
                 reward_data=reward_data,
-                angle=relative_angle
             )
             
             # 檢查是否找到目標

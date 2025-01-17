@@ -313,10 +313,10 @@ public class CrawlerDataSender : MonoBehaviour
 
     private object PrepareData()
     {
-        // 獲取 Rigidbody 組件以取得精確的物理位置和旋轉
-        Rigidbody rb = GetComponent<Rigidbody>();
-        Vector3 crawlerPosition = rb.position;
-        Vector3 crawlerRotation = rb.rotation.eulerAngles;
+        // 使用 Transform 組件取得位置和旋轉
+        Transform transform = GetComponent<Transform>();
+        Vector3 crawlerPosition = transform.position;
+        Vector3 crawlerRotation = transform.rotation.eulerAngles;
         GameObject[] targetObjects = GameObject.FindGameObjectsWithTag(targetTag);
 
         var targetDataList = new List<object>();
