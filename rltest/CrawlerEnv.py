@@ -148,7 +148,8 @@ class CrawlerEnv(gym.Env):
             self.info_socket.settimeout(10)
             self.info_conn, self.info_addr = self.info_socket.accept()
             self.info_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            self.info_conn.settimeout(5)
+            self.info_conn.settimeout(1)  # 降低超時時間以更快檢測連接問題
+            self.info_conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 64 * 1024)  # 設置接收緩衝區大小
             print("已連接到資訊伺服器:", self.info_addr)
         except Exception as e:
             raise Exception(f"資訊伺服器設置失敗: {e}")
@@ -437,49 +438,71 @@ class CrawlerEnv(gym.Env):
             return None, None, None
 
     def receive_data(self):
-        try:
-            length_bytes = self.recv_all(self.info_conn, 4)
-            if not length_bytes:
-                print("未接收到資料長度")
-                return None
-
-            length = int.from_bytes(length_bytes, byteorder='big', signed=True)
-            
-            if length <= 0 or length > 10**6:
-                print(f"接收到無效的資料長度: {length}")
-                return None
-
-            data_bytes = self.recv_all(self.info_conn, length)
-            if not data_bytes:
-                print("未接收到完整資料")
-                return None
-            
+        max_retries = 3
+        retry_delay = 0.01  # 10ms 延遲
+        
+        for retry_count in range(max_retries):
             try:
-                data_str = data_bytes.decode('utf-8')
-                return json.loads(data_str)
-            except json.JSONDecodeError as e:
-                print(f"JSON 解析失敗: {e}")
-                return None
+                length_bytes = self.recv_all(self.info_conn, 4)
+                if not length_bytes:
+                    if retry_count < max_retries - 1:
+                        print(f"未接收到資料長度 (重試 {retry_count + 1}/{max_retries})")
+                        time.sleep(retry_delay)
+                        continue
+                    return None
 
-        except socket.timeout:
-            print("接收資料超時")
-            return None
-        except ConnectionResetError:
-            print("連接被重置")
-            self.info_conn, self.info_addr = self.reconnect_socket(
-                self.info_socket, 
-                self.info_address, 
-                '資料'
-            )
-            return None
-        except Exception as e:
-            print(f"接收資料時發生錯誤: {e}")
-            self.info_conn, self.info_addr = self.reconnect_socket(
-                self.info_socket, 
-                self.info_address, 
-                '資料'
-            )
-            return None
+                length = int.from_bytes(length_bytes, byteorder='big', signed=True)
+                
+                if length <= 0 or length > 10**6:
+                    print(f"接收到無效的資料長度: {length}")
+                    if retry_count < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    return None
+
+                data_bytes = self.recv_all(self.info_conn, length)
+                if not data_bytes:
+                    if retry_count < max_retries - 1:
+                        print(f"未接收到完整資料 (重試 {retry_count + 1}/{max_retries})")
+                        time.sleep(retry_delay)
+                        continue
+                    return None
+                
+                try:
+                    data_str = data_bytes.decode('utf-8')
+                    return json.loads(data_str)
+                except json.JSONDecodeError as e:
+                    print(f"JSON 解析失敗: {e}")
+                    if retry_count < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    return None
+
+            except socket.timeout:
+                if retry_count < max_retries - 1:
+                    print(f"接收資料超時 (重試 {retry_count + 1}/{max_retries})")
+                    time.sleep(retry_delay)
+                    continue
+                return None
+            except ConnectionResetError:
+                print("連接被重置，嘗試重新連接...")
+                self.info_conn, self.info_addr = self.reconnect_socket(
+                    self.info_socket,
+                    self.info_address,
+                    '資訊'
+                )
+                if retry_count < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return None
+            except Exception as e:
+                print(f"接收資料時發生錯誤: {e}")
+                if retry_count < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return None
+        
+        return None  # 如果所有重試都失敗，返回None
 
     def reconnect_socket(self, socket_obj, address, conn_type):
         try:

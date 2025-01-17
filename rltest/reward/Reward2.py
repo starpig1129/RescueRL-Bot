@@ -334,7 +334,6 @@ class RewardFunction:
         回傳:
             Tuple[float, List[float]]: (總獎勵值, 各子獎勵列表)
         """
-        print(reward_data)
         # 提取必要資料
         crawler_pos = reward_data['position']
         target_pos, target_view_pos = self.find_nearest_target(reward_data)

@@ -13,7 +13,7 @@ public class CrawlerDataSender : MonoBehaviour
     public Camera crawlerCamera;
     public string targetTag = "target"; // 改為檢測 target tag
     private bool isConnected = false;
-    private float sendInterval = 0.03f;
+    private float sendInterval = 0.01f; // 提高發送頻率
 
     // 常量定義
     private const int MAX_MESSAGE_SIZE = 1000000; // 1MB 限制，對應 Python 端限制
@@ -87,7 +87,10 @@ public class CrawlerDataSender : MonoBehaviour
             Debug.Log("嘗試連接到伺服器...");
             client = new TcpClient("localhost", 8000);
             client.NoDelay = true;
+            client.SendBufferSize = 1024 * 64; // 增加發送緩衝區大小
+            client.ReceiveBufferSize = 1024 * 64; // 增加接收緩衝區大小
             stream = client.GetStream();
+            stream.WriteTimeout = 1000; // 設置寫入超時為1秒
             isConnected = true;
             Debug.Log("成功連接到伺服器。");
 
