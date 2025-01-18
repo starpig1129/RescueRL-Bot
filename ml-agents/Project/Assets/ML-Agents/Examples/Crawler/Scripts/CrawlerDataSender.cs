@@ -11,9 +11,9 @@ public class CrawlerDataSender : MonoBehaviour
     private TcpClient client;
     private NetworkStream stream;
     public Camera crawlerCamera;
-    public string targetTag = "target"; // 改為檢測 target tag
+    public string targetTag = "TargetObject";
     private bool isConnected = false;
-    private float sendInterval = 0.01f; // 提高發送頻率
+    private float sendInterval = 0.03f; // 提高發送頻率
 
     // 常量定義
     private const int MAX_MESSAGE_SIZE = 1000000; // 1MB 限制，對應 Python 端限制

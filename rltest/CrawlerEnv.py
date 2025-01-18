@@ -41,7 +41,7 @@ class CrawlerEnv(gym.Env):
         self.done = False
         
         # 任務完成記錄
-        self.success_log_file = 'E:/train_log0115/training_results.csv'
+        self.success_log_file = 'E:/train_log0118/training_results.csv'
         self.found_target = False
         self.success_step = 0
         self.start_time = None  # 初始化世代開始時間變數
@@ -76,7 +76,7 @@ class CrawlerEnv(gym.Env):
         self._init_socket_vars()
         
         # 資料處理相關設置
-        base_dir = "test_logs" if test_mode else "E:/train_log0115"
+        base_dir = "test_logs" if test_mode else "E:/train_log0118"
         self.logger = TrainLog()
         self.data_handler = DataHandler(
             base_dir=base_dir,
@@ -262,11 +262,9 @@ class CrawlerEnv(gym.Env):
             )
             
             # 檢查是否找到目標
-            if not self.found_target and reward_list is not None:
-                touch_reward = reward_list[10]  # touch_reward 的 index 是 10
-                if touch_reward > 0 :
-                    self.found_target = True
-                    self.success_step = self.step_count
+            if reward_list[10] > 0 :
+                self.found_target = True
+                self.success_step = self.step_count
             
             self.last_reward_list = reward_list.copy() if reward_list is not None else None
             

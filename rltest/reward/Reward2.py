@@ -22,7 +22,7 @@ class RewardFunction:
     """
     
     # 類別常數
-    TOUCH_THRESHOLD: float = 10.0
+    TOUCH_THRESHOLD: float = 13.0
     MAX_MOVEMENT_HISTORY: int = 150
     ROTATION_THRESHOLD: float = 45.0
     VIEW_CENTER_THRESHOLD: float = 0.3
@@ -271,7 +271,7 @@ class RewardFunction:
                 dx = target_pos['x'] - crawler_position['x']
                 dz = target_pos['z'] - crawler_position['z']
                 distance = np.sqrt(dx**2 + dz**2)
-                
+                print(distance)
                 # 判定碰觸
                 if distance < self.TOUCH_THRESHOLD:
                     self._target_reward_states[target_id] = False
@@ -336,6 +336,8 @@ class RewardFunction:
         """
         # 提取必要資料
         crawler_pos = reward_data['position']
+        if reward_data['is_colliding']:
+            print(reward_data['is_colliding'],flush=True)
         target_pos, target_view_pos = self.find_nearest_target(reward_data)
         rotation = reward_data['rotation']
         target_positions = [target['position'] for target in reward_data['targets']]
