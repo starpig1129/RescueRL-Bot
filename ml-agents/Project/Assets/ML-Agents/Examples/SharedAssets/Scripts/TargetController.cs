@@ -22,7 +22,7 @@ namespace Unity.MLAgentsExamples
     {
 
         [Header("檢測的碰撞器標記")]
-        public string tagToDetect = "agent"; //要檢測的碰撞器標記
+        public string tagToDetect = "Crawler"; //要檢測的碰撞器標記
 
         [Header("目標放置")]
         public float spawnRadius; //隨機生成目標的半徑。
@@ -108,38 +108,38 @@ namespace Unity.MLAgentsExamples
         }
 
         private bool isCoolingDown = false;
-        private float cooldownDuration = 1f; // 冷卻時間為1秒
+        private float cooldownDuration = 3f; // 冷卻時間
 
         private void OnCollisionEnter(Collision col)
         {
             if (isCoolingDown) return; // 如果正在冷卻中，退出方法
 
-            if (col.transform.CompareTag(tagToDetect))
+            if (col.gameObject.CompareTag(tagToDetect))
             {
-                onCollisionEnterEvent.Invoke(col);
+            onCollisionEnterEvent.Invoke(col);
 
-                if (respawnIfTouched)
+            if (respawnIfTouched)
+            {
+                StartCoroutine(MoveAfterDelay(0.5f)); // 添加0.5秒延遲
+
+                num += 1;
+
+                if (num == 1)
                 {
-                    MoveTargetToHome();
-
-                    num += 1;
-
-                    //UnityEngine.Debug.Log("目前的 num 值: " + num); // 輸出 num 的值
-
-                    if (num == 1)
-                    {
-
-                        StartCoroutine(ReloadSceneAfterDelay(2f)); // 延遲2秒後重新加載場景
-                        //UnityEngine.Debug.Log("完成!");
-
-                        num = 0;
-
-                    }
-
-                    // 開始冷卻時間
-                    StartCoroutine(CooldownCoroutine());
+                StartCoroutine(ReloadSceneAfterDelay(2f));
+                num = 0;
                 }
+
+                // 開始冷卻時間
+                StartCoroutine(CooldownCoroutine());
             }
+            }
+        }
+
+        private IEnumerator MoveAfterDelay(float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            MoveTargetToHome();
         }
 
         private IEnumerator CooldownCoroutine()

@@ -22,7 +22,7 @@ class RewardFunction:
     """
     
     # 類別常數
-    TOUCH_THRESHOLD: float = 13.0
+    TOUCH_THRESHOLD: float = 15.0
     MAX_MOVEMENT_HISTORY: int = 150
     ROTATION_THRESHOLD: float = 45.0
     VIEW_CENTER_THRESHOLD: float = 0.3
@@ -241,7 +241,7 @@ class RewardFunction:
         return 0.0
 
     def calculate_touch_rewards(self, target_positions: List[Dict[str, float]], 
-                              crawler_position: Dict[str, float]) -> Tuple[float, float]:
+                              crawler_position: Dict[str, float], reward_data: Dict[str, Any]) -> Tuple[float, float]:
         """計算碰觸目標的獎勵。
         
         根據智能體與目標的距離計算碰觸獎勵，
@@ -271,9 +271,8 @@ class RewardFunction:
                 dx = target_pos['x'] - crawler_position['x']
                 dz = target_pos['z'] - crawler_position['z']
                 distance = np.sqrt(dx**2 + dz**2)
-                print(distance)
                 # 判定碰觸
-                if distance < self.TOUCH_THRESHOLD:
+                if bool(reward_data['is_colliding']) is True or distance < self.TOUCH_THRESHOLD:
                     self._target_reward_states[target_id] = False
                     touch_reward = 1.0
                     self._continuous_touch_reward = 100.0
@@ -336,8 +335,6 @@ class RewardFunction:
         """
         # 提取必要資料
         crawler_pos = reward_data['position']
-        if reward_data['is_colliding']:
-            print(reward_data['is_colliding'],flush=True)
         target_pos, target_view_pos = self.find_nearest_target(reward_data)
         rotation = reward_data['rotation']
         target_positions = [target['position'] for target in reward_data['targets']]
@@ -349,7 +346,7 @@ class RewardFunction:
             self.calculate_view_rewards(target_view_pos)
         movement_reward, movement_penalty = self.calculate_movement_rewards(crawler_pos)
         posture_penalty = self.calculate_posture_penalty(rotation)
-        touch_reward, continuous_reward = self.calculate_touch_rewards(target_positions, crawler_pos)
+        touch_reward, continuous_reward = self.calculate_touch_rewards(target_positions, crawler_pos, reward_data)
 
         # 套用權重計算最終獎勵
         reward_list = [

@@ -20,7 +20,7 @@ public class ObjectManager : MonoBehaviour
 
     public void InitializeObjects()
     {
-        objects = GameObject.FindGameObjectsWithTag("TargetObject");
+        objects = GameObject.FindGameObjectsWithTag("Target");
 
         AddPositions();
         SetRandomObjectPositions();

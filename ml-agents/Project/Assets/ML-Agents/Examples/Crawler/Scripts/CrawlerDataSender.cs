@@ -11,13 +11,20 @@ public class CrawlerDataSender : MonoBehaviour
     private TcpClient client;
     private NetworkStream stream;
     public Camera crawlerCamera;
-    public string targetTag = "TargetObject";
+    private string targetTag = "Target";
     private bool isConnected = false;
     private float sendInterval = 0.03f; // 提高發送頻率
 
     // 常量定義
     private const int MAX_MESSAGE_SIZE = 1000000; // 1MB 限制，對應 Python 端限制
     private readonly object streamLock = new object();
+
+    private bool isColliding = false;  // 碰撞狀態變數
+    private float collisionTime = 0f;  // 記錄碰撞開始時間
+    private bool isHoldingCollision = false; // 是否正在保持碰撞狀態
+    private bool hasCollisionBeenSent = false; // 追蹤碰撞訊息是否已成功發送
+    private int collisionSendAttempts = 0; // 追蹤發送嘗試次數
+    private const int MAX_SEND_ATTEMPTS = 10; // 最大發送嘗試次數
 
     private void Start()
     {
@@ -32,52 +39,45 @@ public class CrawlerDataSender : MonoBehaviour
         UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
-    private bool isSceneReloading = false;  // 新增場景重載標記
-
     private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
     {
-        Debug.Log($"場景已重新加載: {scene.name}, 保持碰撞狀態: {isColliding}");
-        isSceneReloading = true;
-        SafeStartCoroutine(HandleSceneLoadedState());
+        Debug.Log($"場景已重新加載: {scene.name}");
+        // 完全重置所有狀態
+        ResetAllStates();
     }
 
-    private System.Collections.IEnumerator HandleSceneLoadedState()
+    private void ResetAllStates()
     {
-        // 等待兩幀確保所有物件都已初始化
-        yield return null;
-        yield return null;
+        // 停止所有協程
+        StopAllCoroutines();
 
-        if (isColliding || isHoldingCollision)
+        // 重置所有碰撞相關狀態
+        isColliding = false;
+        isHoldingCollision = false;
+        hasCollisionBeenSent = false;
+        collisionSendAttempts = 0;
+        collisionTime = 0f;
+
+        // 重新初始化網路連接
+        if (stream != null)
         {
-            // 確保在場景重載後狀態保持
-            DontDestroyOnLoad(gameObject);
-
-            // 強制更新狀態
-            isColliding = true;
-            isHoldingCollision = true;
-            collisionTime = Time.time;  // 重置碰撞時間
-
-            // 重新啟動碰撞保持協程
-            StopAllCoroutines();
-            SafeStartCoroutine(HoldCollisionState());
-
-            Debug.Log($"場景重載後強制更新狀態: isColliding = {isColliding}, isHolding = {isHoldingCollision}");
+            stream.Close();
+            stream = null;
+        }
+        if (client != null)
+        {
+            client.Close();
+            client = null;
         }
 
-        // 等待一小段時間後再清除重載標記
-        yield return new WaitForSeconds(0.5f);
-        isSceneReloading = false;
-        Debug.Log("場景重載處理完成");
+        // 重新建立連接
+        ConnectToServer();
+
+        Debug.Log("已完全重置所有狀態");
     }
 
     private void Update()
     {
-        // 在場景重載過程中強制保持碰撞狀態
-        if (isSceneReloading && (isColliding || isHoldingCollision))
-        {
-            isColliding = true;
-            isHoldingCollision = true;
-        }
     }
 
     private void ConnectToServer()
@@ -112,20 +112,6 @@ public class CrawlerDataSender : MonoBehaviour
         try
         {
             var data = PrepareData();
-
-            // 如果正在場景重載且有碰撞狀態，強制設置碰撞標記
-            if (isSceneReloading && (isColliding || isHoldingCollision))
-            {
-                var originalData = (dynamic)data;
-                data = new
-                {
-                    position = originalData.position,
-                    rotation = originalData.rotation,
-                    targets = originalData.targets,
-                    is_colliding = true  // 強制設置為 true
-                };
-            }
-
             string jsonData = JsonConvert.SerializeObject(data);
             byte[] dataBytes = Encoding.UTF8.GetBytes(jsonData);
 
@@ -148,14 +134,54 @@ public class CrawlerDataSender : MonoBehaviour
                         Array.Reverse(lengthBytes);
                     }
 
-                    stream.Write(lengthBytes, 0, 4);
-                    stream.Write(dataBytes, 0, dataBytes.Length);
-                    stream.Flush();
-
-                    // 只在狀態變化時輸出日誌
-                    if (isColliding)
+                    bool sendSuccess = false;
+                    try
                     {
-                        Debug.Log($"發送碰撞狀態: isColliding = {isColliding}");
+                        // 發送數據長度
+                        stream.Write(lengthBytes, 0, 4);
+                        stream.Write(dataBytes, 0, dataBytes.Length);
+                        stream.Flush();
+
+                        // 立即檢查是否有確認數據
+                        byte[] confirmBuffer = new byte[1];
+                        if (stream.DataAvailable)
+                        {
+                            stream.Read(confirmBuffer, 0, 1);
+                            sendSuccess = (confirmBuffer[0] == 1);
+                        }
+                        else
+                        {
+                            // 如果沒有立即收到確認，先標記為成功
+                            // 讓協程繼續嘗試發送，直到收到確認或達到最大嘗試次數
+                            sendSuccess = true;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError($"數據發送失敗: {e.Message}");
+                        sendSuccess = false;
+                        HandleConnectionError();
+                    }
+
+                    // 如果正在碰撞狀態且尚未成功發送
+                    if (isColliding && !hasCollisionBeenSent)
+                    {
+                        collisionSendAttempts++;
+
+                        if (sendSuccess)
+                        {
+                            hasCollisionBeenSent = true;
+                            Debug.Log($"碰撞狀態已成功發送 (第 {collisionSendAttempts} 次嘗試)");
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"碰撞狀態發送失敗 (第 {collisionSendAttempts} 次嘗試)");
+                            // 如果連接出現問題，觸發重連
+                            if (!stream.CanWrite)
+                            {
+                                HandleConnectionError();
+                            }
+                        }
                     }
                 }
             }
@@ -166,12 +192,6 @@ public class CrawlerDataSender : MonoBehaviour
             HandleConnectionError();
         }
     }
-
-    private bool isColliding = false;  // 碰撞狀態變數
-    private float collisionTime = 0f;  // 記錄碰撞開始時間
-    private const float MIN_COLLISION_TIME = 1.5f; // 增加最小碰撞持續時間，確保狀態能被傳送
-    private const float COLLISION_HOLD_TIME = 2.0f; // 延長保持時間，確保能覆蓋場景重載過程
-    private bool isHoldingCollision = false; // 是否正在保持碰撞狀態
 
     private void OnCollisionEnter(Collision collision)
     {
@@ -192,10 +212,9 @@ public class CrawlerDataSender : MonoBehaviour
         {
             isColliding = true;
             isHoldingCollision = true;
+            hasCollisionBeenSent = false;
+            collisionSendAttempts = 0;
             collisionTime = Time.time;
-
-            // 使用 DontDestroyOnLoad 確保物件在場景重載時不被銷毀
-            DontDestroyOnLoad(gameObject);
 
             // 安全地啟動新的碰撞保持協程
             SafeStartCoroutine(HoldCollisionState());
@@ -204,6 +223,8 @@ public class CrawlerDataSender : MonoBehaviour
         {
             isColliding = false;
             isHoldingCollision = false;
+            hasCollisionBeenSent = false;
+            collisionSendAttempts = 0;
         }
     }
 
@@ -222,18 +243,47 @@ public class CrawlerDataSender : MonoBehaviour
 
     private System.Collections.IEnumerator HoldCollisionState()
     {
-        yield return new WaitForSeconds(MIN_COLLISION_TIME);
-        Debug.Log($"最小碰撞時間已過: {MIN_COLLISION_TIME}秒");
+        float retryInterval = 0.1f; // 稍微增加重試間隔，避免過於頻繁
+        float maxHoldTime = 1.0f; // 減少最大保持時間，加快重置
+        float startTime = Time.time;
 
-        float holdEndTime = Time.time + COLLISION_HOLD_TIME;
-        while (Time.time < holdEndTime && isHoldingCollision)
+        while (isHoldingCollision && !hasCollisionBeenSent)
         {
+            // 檢查是否超過最大保持時間
+            if (Time.time - startTime > maxHoldTime)
+            {
+                Debug.LogWarning($"超過最大保持時間 ({maxHoldTime}秒)，結束碰撞狀態");
+                break;
+            }
+
+            // 檢查是否達到最大嘗試次數
+            if (collisionSendAttempts >= MAX_SEND_ATTEMPTS)
+            {
+                Debug.LogWarning($"已達最大嘗試次數 ({MAX_SEND_ATTEMPTS})，結束碰撞狀態");
+                break;
+            }
+
+            // 檢查連接狀態
+            if (!isConnected || stream == null || !stream.CanWrite)
+            {
+                Debug.LogWarning("連接已斷開，結束碰撞狀態");
+                break;
+            }
+
             isColliding = true;
-            Debug.Log($"保持碰撞狀態: 剩餘 {holdEndTime - Time.time:F2} 秒");
-            yield return new WaitForSeconds(0.1f);
+            Debug.Log($"保持碰撞狀態... (嘗試次數: {collisionSendAttempts}, 已等待: {Time.time - startTime:F2}秒)");
+            yield return new WaitForSeconds(retryInterval);
         }
 
-        Debug.Log("碰撞保持時間結束");
+        if (hasCollisionBeenSent)
+        {
+            Debug.Log($"碰撞訊息已成功發送，總用時: {Time.time - startTime:F2}秒");
+        }
+        else
+        {
+            Debug.LogWarning($"碰撞訊息發送失敗，總嘗試次數: {collisionSendAttempts}");
+        }
+
         SetCollisionState(false);
     }
 
@@ -241,8 +291,8 @@ public class CrawlerDataSender : MonoBehaviour
     {
         if (collision.gameObject.CompareTag(targetTag))
         {
-            // 在碰撞持續期間保持狀態
-            if (isHoldingCollision)
+            // 在碰撞持續期間，如果尚未成功發送，保持碰撞狀態
+            if (isHoldingCollision && !hasCollisionBeenSent)
             {
                 isColliding = true;
             }
@@ -253,56 +303,31 @@ public class CrawlerDataSender : MonoBehaviour
     {
         if (collision.gameObject.CompareTag(targetTag))
         {
-            // 不立即重置碰撞狀態，讓協程處理
-            Debug.Log($"碰撞物理結束，等待保持時間結束");
+            Debug.Log("碰撞物理結束，等待確認訊息發送狀態");
         }
     }
 
     private void OnEnable()
     {
-        if (!isSceneReloading)
-        {
-            ResetCollisionState();
-            Debug.Log("OnEnable: 正常重置狀態");
-        }
-        else
-        {
-            Debug.Log("OnEnable: 場景重載中，跳過重置");
-        }
+        ResetCollisionState();
+        Debug.Log("OnEnable: 重置狀態");
     }
 
     private void OnDisable()
     {
-        if (!isSceneReloading)
-        {
-            ResetCollisionState();
-            Debug.Log("OnDisable: 正常重置狀態");
-        }
-        else
-        {
-            // 在場景重載時保持狀態
-            if (isColliding || isHoldingCollision)
-            {
-                DontDestroyOnLoad(gameObject);
-                Debug.Log("OnDisable: 場景重載中，保持碰撞狀態");
-            }
-        }
+        ResetCollisionState();
+        Debug.Log("OnDisable: 重置狀態");
     }
 
     private void ResetCollisionState()
     {
-        // 如果正在場景重載且有碰撞狀態，則不重置
-        if (isSceneReloading && (isColliding || isHoldingCollision))
-        {
-            Debug.Log("ResetCollisionState: 場景重載中，保持碰撞狀態");
-            return;
-        }
-
         StopAllCoroutines();
         isColliding = false;
         isHoldingCollision = false;
+        hasCollisionBeenSent = false;
+        collisionSendAttempts = 0;
         collisionTime = 0f;
-        Debug.Log("ResetCollisionState: 完全重置狀態");
+        Debug.Log("ResetCollisionState: 重置碰撞狀態");
     }
 
     private void FixedUpdate()
@@ -310,7 +335,7 @@ public class CrawlerDataSender : MonoBehaviour
         // 在物理更新時輸出狀態
         if (isColliding || isHoldingCollision)
         {
-            Debug.Log($"當前狀態: isColliding = {isColliding}, isHolding = {isHoldingCollision}, time since collision = {Time.time - collisionTime}");
+            Debug.Log($"當前狀態: isColliding = {isColliding}, isHolding = {isHoldingCollision}, hasBeenSent = {hasCollisionBeenSent}, attempts = {collisionSendAttempts}");
         }
     }
 
@@ -358,6 +383,9 @@ public class CrawlerDataSender : MonoBehaviour
         isConnected = false;
         CancelInvoke("SendData");
 
+        // 立即重置碰撞狀態
+        SetCollisionState(false);
+
         if (stream != null)
         {
             stream.Close();
@@ -370,6 +398,7 @@ public class CrawlerDataSender : MonoBehaviour
             client = null;
         }
 
+        Debug.LogWarning("連接中斷，重置碰撞狀態並準備重新連接");
         // 嘗試重新連接
         Invoke("ConnectToServer", 5f);
     }
