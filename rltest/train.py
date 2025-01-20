@@ -211,7 +211,7 @@ def main():
         callback = EnhancedEpisodeCallback(train_logger=logger, save_freq=1)
         
         # 設置總訓練步數
-        total_timesteps = 10_00_000
+        total_timesteps = 10_000_000
         
         # 開始訓練循環
         print("\n開始訓練...")

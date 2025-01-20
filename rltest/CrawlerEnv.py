@@ -39,6 +39,7 @@ class CrawlerEnv(gym.Env):
         self.fps_counter = 0
         self.fps = 0
         self.done = False
+        self.min_distance = float('inf')  # 追蹤最小距離
         
         # 任務完成記錄
         self.success_log_file = 'E:/train_log0118/training_results.csv'
@@ -49,7 +50,7 @@ class CrawlerEnv(gym.Env):
         # 如果記錄檔案不存在，則建立並寫入標題列
         if not os.path.exists(self.success_log_file):
             with open(self.success_log_file, 'w', encoding='utf-8') as f:
-                f.write("世代,是否成功,總步數,成功步數,執行時間\n")
+                f.write("世代,是否成功,總步數,成功步數,執行時間,最小距離\n")
         
         # 動作空間: 0=左轉(-45°), 1=直走(0°), 2=右轉(45°)
         self.action_space = gym.spaces.Discrete(3)
@@ -262,9 +263,15 @@ class CrawlerEnv(gym.Env):
             )
             
             # 檢查是否找到目標
-            if reward_list[10] > 0 :
+            if reward_list[10] > 0:
                 self.found_target = True
                 self.success_step = self.step_count
+            
+            # 更新最小距離
+            crawler_pos = reward_data['position']
+            target_pos, _ = self.reward_function.find_nearest_target(reward_data)
+            current_distance = np.sqrt((crawler_pos['x'] - target_pos[0])**2 + (crawler_pos['z'] - target_pos[1])**2)
+            self.min_distance = min(self.min_distance, current_distance)
             
             self.last_reward_list = reward_list.copy() if reward_list is not None else None
             
@@ -305,7 +312,7 @@ class CrawlerEnv(gym.Env):
             success_str = "1" if self.found_target else "0"
             success_step_str = str(self.success_step) if self.found_target else ""
             duration = time.time() - self.start_time if self.start_time else 0
-            f.write(f"{self.epoch},{success_str},{self.step_count},{success_step_str},{duration:.1f}\n")
+            f.write(f"{self.epoch},{success_str},{self.step_count},{success_step_str},{duration:.1f},{self.min_distance:.1f}\n")
 
     def reset(self):
         try:
@@ -324,6 +331,7 @@ class CrawlerEnv(gym.Env):
             self.found_target = False
             self.success_step = 0
             self.start_time = time.time()  # 記錄世代開始時間
+            self.min_distance = float('inf')  # 重置最小距離
             
             # 重置獎勵函數的狀態
             self.reward_function.reset()
