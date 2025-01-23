@@ -203,9 +203,9 @@ class CustomPolicy(ActorCriticPolicy):
         
         # 初始化特徵緩衝區，用於存儲最近60幀的特徵
         self.feature_buffer = []
-        self.buffer_size = 60  # 存儲60幀
-        self.sample_interval = 6  # 每6幀取1幀
-        self.temporal_size = 10  # 時序輸入使用10幀
+        self.buffer_size = 300  # 存儲幀
+        self.sample_interval = 6  # 每取幀
+        self.temporal_size = 50  # 時序輸入幀
     
     def _get_env(self):
         """
@@ -267,11 +267,27 @@ class CustomPolicy(ActorCriticPolicy):
         
         return temporal_features
 
+    def _is_new_epoch(self):
+        """
+        檢查是否為新的世代開始
+        通過環境的 step_count 來判斷
+        """
+        env = self._get_env()
+        if env is not None:
+            # 如果步數為0，表示是新世代的開始
+            return env.step_count == 0
+        return False
+
     def forward(self, obs, deterministic=False):
         """
         前向傳播函數
         處理觀察並生成行動、價值和對數概率
         """
+        # 檢查是否為新世代
+        if self._is_new_epoch():
+            if hasattr(self, 'feature_buffer_tensor'):
+                delattr(self, 'feature_buffer_tensor')
+        
         # 提取特徵
         features = self.extract_features(obs)
         self.layer_outputs = self.features_extractor.layer_outputs

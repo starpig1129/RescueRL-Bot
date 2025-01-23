@@ -14,3 +14,5 @@ DataDecompress.py
 output
 mlagent.code-workspace
 *.png
+*.meta
+*.bmp

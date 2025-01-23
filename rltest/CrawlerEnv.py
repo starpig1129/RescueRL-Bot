@@ -42,7 +42,7 @@ class CrawlerEnv(gym.Env):
         self.min_distance = float('inf')  # 追蹤最小距離
         
         # 任務完成記錄
-        self.success_log_file = 'E:/train_log0118/training_results.csv'
+        self.success_log_file = 'train_log/training_results.csv'
         self.found_target = False
         self.success_step = 0
         self.start_time = None  # 初始化世代開始時間變數
@@ -77,7 +77,7 @@ class CrawlerEnv(gym.Env):
         self._init_socket_vars()
         
         # 資料處理相關設置
-        base_dir = "test_logs" if test_mode else "E:/train_log0118"
+        base_dir = "test_logs" if test_mode else "train_log"
         self.logger = TrainLog()
         self.data_handler = DataHandler(
             base_dir=base_dir,

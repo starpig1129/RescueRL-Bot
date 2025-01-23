@@ -134,16 +134,10 @@ class DataHandler:
             self.logger.update_data_handler_stats(self.stats)
 
     def create_env_datasets(self) -> None:
-        """創建環境數據相關的數據集，初始大小為0"""
+        """創建環境數據相關的數據集，初始大小為0，移除obs只保留原始圖像"""
         chunk_size = (100, 384, 640, 3)  # 影像數據的分塊大小
         
         self.env_datasets = {
-            'obs': self.env_file.create_dataset(
-                'obs', (0, 384, 640, 3), 
-                maxshape=(None, 384, 640, 3), 
-                dtype=np.uint8, 
-                chunks=chunk_size
-            ),
             'angle_degrees': self.env_file.create_dataset(
                 'angle_degrees', (0,), 
                 maxshape=(None,), 
@@ -190,34 +184,34 @@ class DataHandler:
         self.current_max_steps = 0
 
     def create_feature_datasets(self) -> None:
-        """創建神經網絡特徵相關的數據集，初始大小為0"""
+        """創建神經網絡特徵相關的數據集，初始大小為0，只保留第一個時序的影像內容"""
         self.feature_datasets = {
             'input': self.feature_file.create_dataset(
-                'layer_input', (0, 10, 3, 224, 224),  # 增加時序維度
-                maxshape=(None, 10, 3, 224, 224),
+                'layer_input', (0, 3, 224, 224),  # 增加時序維度
+                maxshape=(None, 3, 224, 224),
                 dtype=np.float32,
                 chunks=True
             ),
             'conv1_output': self.feature_file.create_dataset(
-                'layer_conv1', (0, 10, 64, 112, 112),  # 增加時序維度
-                maxshape=(None, 10, 64, 112, 112),
+                'layer_conv1', (0, 64, 112, 112),  # 增加時序維度
+                maxshape=(None, 64, 112, 112),
                 dtype=np.float32,
                 chunks=True
             ),
             'final_residual_output': self.feature_file.create_dataset(
-                'layer_final_residual', (0, 10, 512, 7, 7),  # 增加時序維度
-                maxshape=(None, 10, 512, 7, 7),
+                'layer_final_residual', (0, 512, 7, 7),  # 增加時序維度
+                maxshape=(None, 512, 7, 7),
                 dtype=np.float32,
                 chunks=True
             ),
             'features_output': self.feature_file.create_dataset(
-                'layer_feature', (0, 10, 512),  # 增加時序維度
-                maxshape=(None, 10, 512),
+                'layer_feature', (0, 512),  # 移除時序維度，只保存特徵向量
+                maxshape=(None, 512),
                 dtype=np.float32,
                 chunks=True
             ),
             'actor_output': self.feature_file.create_dataset(
-                'layer_actor', (0, 3),  # 不需要時序維度，因為是最終輸出
+                'layer_actor', (0, 3),  # 動作輸出
                 maxshape=(None, 3),
                 dtype=np.float32,
                 chunks=True
@@ -330,9 +324,8 @@ class DataHandler:
             if step >= self.current_max_steps:
                 self._resize_datasets(step)
             
-            # 準備環境數據
+            # 準備環境數據，不保存obs
             env_data = {
-                'obs': obs,
                 'angle_degrees': angle_degrees,
                 'reward': reward,
                 'reward_list': reward_list,
@@ -342,7 +335,19 @@ class DataHandler:
             
             # 確定是否需要保存特徵數據
             should_save_features = ((step-1) % self.feature_save_interval) == 0
-            feature_data = layer_outputs if should_save_features else None
+            
+            # 如果需要保存特徵，只保存第一個時序的數據
+            feature_data = None
+            if should_save_features and layer_outputs is not None:
+                feature_data = {}
+                for name, tensor in layer_outputs.items():
+                    if tensor is not None and name in self.feature_datasets:
+                        if isinstance(tensor, torch.Tensor):
+                            tensor = tensor.cpu().numpy()
+                        # 只取第一個時序的數據
+                        if len(tensor.shape) > 2 and tensor.shape[0] == 50:  # 有時序維度
+                            tensor = tensor[0]  # 只取第一個時序
+                        feature_data[name] = tensor
             
             # 打包數據並放入隊列
             data = {
@@ -376,40 +381,32 @@ class DataHandler:
             
             # 寫入環境數據
             env_data = data['env_data']
-            if env_data['obs'] is not None:
-                self.env_datasets['obs'][step] = env_data['obs']
-            if env_data['angle_degrees'] is not None:
-                self.env_datasets['angle_degrees'][step] = env_data['angle_degrees']
-            if env_data['reward'] is not None:
-                self.env_datasets['reward'][step] = env_data['reward']
-            if env_data['reward_list'] is not None:
-                self.env_datasets['reward_list'][step] = env_data['reward_list']
-            if env_data['origin_image'] is not None:
-                self.env_datasets['origin_image'][step] = env_data['origin_image']
+            for key in ['angle_degrees', 'reward', 'reward_list', 'origin_image']:
+                if env_data.get(key) is not None:
+                    self.env_datasets[key][step] = env_data[key]
 
             # 處理YOLO檢測結果
             results = env_data['results']
-            if results is not None:
+            if results is not None and hasattr(results, 'boxes'):
                 try:
-                    if hasattr(results, 'boxes'):
-                        if torch.is_tensor(results.boxes.xyxy):
-                            boxes = results.boxes.xyxy.cpu().numpy()
-                            scores = results.boxes.conf.cpu().numpy()
-                            classes = results.boxes.cls.cpu().numpy()
-                        else:
-                            boxes = results.boxes.xyxy
-                            scores = results.boxes.conf
-                            classes = results.boxes.cls
+                    if torch.is_tensor(results.boxes.xyxy):
+                        boxes = results.boxes.xyxy.cpu().numpy()
+                        scores = results.boxes.conf.cpu().numpy()
+                        classes = results.boxes.cls.cpu().numpy()
+                    else:
+                        boxes = results.boxes.xyxy
+                        scores = results.boxes.conf
+                        classes = results.boxes.cls
 
-                        # 調整數組大小
-                        boxes = self._pad_or_trim_array(boxes, (10, 4))
-                        scores = self._pad_or_trim_array(scores, (10,))
-                        classes = self._pad_or_trim_array(classes, (10,))
+                    # 調整數組大小
+                    boxes = self._pad_or_trim_array(boxes, (10, 4))
+                    scores = self._pad_or_trim_array(scores, (10,))
+                    classes = self._pad_or_trim_array(classes, (10,))
 
-                        # 保存數據
-                        self.env_datasets['yolo_boxes'][step] = boxes
-                        self.env_datasets['yolo_scores'][step] = scores
-                        self.env_datasets['yolo_classes'][step] = classes.astype(np.int32)
+                    # 保存數據
+                    self.env_datasets['yolo_boxes'][step] = boxes
+                    self.env_datasets['yolo_scores'][step] = scores
+                    self.env_datasets['yolo_classes'][step] = classes.astype(np.int32)
                 except Exception as e:
                     self._log_error(e)
                     # 發生錯誤時使用零值填充
@@ -426,9 +423,6 @@ class DataHandler:
                 for name, tensor in feature_data.items():
                     if tensor is not None and name in self.feature_datasets:
                         try:
-                            # 確保數據是numpy格式
-                            if isinstance(tensor, torch.Tensor):
-                                tensor = tensor.cpu().numpy()
                             self.feature_datasets[name][feature_step] = tensor
                         except Exception as e:
                             self._log_error(e)

@@ -248,4 +248,4 @@ def main(model_dir="models"):
                 print(f"清理資源時發生錯誤: {e}")
 
 if __name__ == "__main__":
-    main('E:/train_log0118/models')
+    main()
