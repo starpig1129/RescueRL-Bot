@@ -1,6 +1,7 @@
 import os
 import h5py
 import numpy as np
+import cv2
 
 class DataReader:
     def __init__(self, base_dir="train_logs"):
@@ -8,6 +9,30 @@ class DataReader:
         self.env_dir = os.path.join(base_dir, "env_data")
         self.feature_dir = os.path.join(base_dir, "feature_data")
         self.feature_save_interval = 10  # 特徵保存間隔
+        
+        # YOLO類別顏色映射
+        self.colors = {
+            0: (0, 255, 0),    # 人 - 綠色
+        }
+        
+    def _draw_boxes(self, image: np.ndarray, boxes: np.ndarray, 
+                   scores: np.ndarray, classes: np.ndarray) -> np.ndarray:
+        """在圖像上繪製YOLO檢測框"""
+        img = image.copy()
+        for box, score, cls in zip(boxes, scores, classes):
+            if score > 0.75:  # 只繪製置信度大於0.1的檢測結果
+                x1, y1, x2, y2 = box.astype(int)
+                color = self.colors.get(cls, (128, 128, 128))  # 未知類別使用灰色
+                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                label = f"Class {cls}: {score:.2f}"
+                cv2.putText(img, label, (x1, y1-10), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        return img
+        
+    def synthesize_obs(self, origin_image: np.ndarray, boxes: np.ndarray, 
+                      scores: np.ndarray, classes: np.ndarray) -> np.ndarray:
+        """從原始圖像和YOLO檢測結果合成obs"""
+        return self._draw_boxes(origin_image, boxes, scores, classes)
         
     def get_max_steps(self, epoch):
         """讀取指定世代的最大步數"""
@@ -19,11 +44,11 @@ class DataReader:
         
         try:
             with h5py.File(env_file_path, 'r') as env_file:
-                if 'obs' not in env_file:
-                    print(f"資料集 'obs' 在 {env_file_path} 中不存在")
+                if 'origin_image' not in env_file:
+                    print(f"資料集 'origin_image' 在 {env_file_path} 中不存在")
                     return None
                 
-                max_steps = env_file['obs'].shape[0]
+                max_steps = env_file['origin_image'].shape[0]
                 return max_steps
                 
         except Exception as e:
@@ -68,7 +93,7 @@ class DataReader:
             with h5py.File(env_file_path, 'r') as env_file:
                 # 檢查並讀取環境數據集
                 env_datasets = [
-                    'obs', 'angle_degrees', 'reward', 'reward_list',
+                    'angle_degrees', 'reward', 'reward_list',
                     'origin_image', 'yolo_boxes', 'yolo_scores', 'yolo_classes'
                 ]
                 
@@ -81,10 +106,21 @@ class DataReader:
                 # 獲取實際的步數範圍
                 if isinstance(slice_obj, slice):
                     start = slice_obj.start if slice_obj.start is not None else 0
-                    stop = slice_obj.stop if slice_obj.stop is not None else len(env_file['obs'])
+                    stop = slice_obj.stop if slice_obj.stop is not None else len(env_file['origin_image'])
                     steps = range(start, stop)
                 else:
                     steps = [slice_obj]
+                    
+                # 合成obs數據
+                obs_data = np.zeros_like(aligned_data['origin_image'])
+                for i in range(len(steps)):
+                    obs_data[i] = self.synthesize_obs(
+                        aligned_data['origin_image'][i],
+                        aligned_data['yolo_boxes'][i],
+                        aligned_data['yolo_scores'][i],
+                        aligned_data['yolo_classes'][i]
+                    )
+                aligned_data['obs'] = obs_data
             
             # 打開特徵數據檔案
             with h5py.File(feature_file_path, 'r') as feature_file:
@@ -185,7 +221,7 @@ class DataReader:
                         'dtype': str(dataset.dtype),
                         'size': dataset.size
                     }
-                    if key == 'obs':
+                    if key == 'origin_image':
                         info['total_steps'] = dataset.shape[0]
             
             # 獲取特徵數據集的信息
