@@ -34,12 +34,21 @@ class PretrainedResNet(BaseFeaturesExtractor):
         for name, param in self.extractor.named_parameters():
             print(f"{name}: requires_grad = {param.requires_grad}")
         
-        # 初始化用於存儲層輸出的字典
+        # 初始化用於存儲層輸出和梯度信息的字典
         self.layer_outputs = {}
         
-        # 註冊前向傳播鉤子，用於捕獲中間層的輸出
+        # 註冊前向傳播和梯度鉤子
         self.extractor.conv1.register_forward_hook(self.get_activation('conv1_output'))
         self.extractor.layer4.register_forward_hook(self.get_activation('final_residual_output'))
+        
+        # 註冊梯度鉤子（只為需要梯度的參數註冊）
+        if self.extractor.conv1.weight.requires_grad:
+            self.extractor.conv1.weight.register_hook(self._get_gradient_hook('conv1'))
+        for i, layer in enumerate(self.extractor.layer4):
+            if layer.conv1.weight.requires_grad:
+                layer.conv1.weight.register_hook(self._get_gradient_hook(f'layer4_{i}_conv1'))
+            if layer.conv2.weight.requires_grad:
+                layer.conv2.weight.register_hook(self._get_gradient_hook(f'layer4_{i}_conv2'))
     
     def get_activation(self, name):
         """
@@ -47,49 +56,49 @@ class PretrainedResNet(BaseFeaturesExtractor):
         """
         
         def hook(model, input, output):
-            self.layer_outputs[name] = output.detach().cpu().numpy()
+            with torch.no_grad():
+                self.layer_outputs[name] = output.cpu().numpy()
         return hook
     
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         """
         前向傳播函數
-        儲存輸入和所有中間層的輸出用於可視化
+        儲存輸入和所有中間層的輸出用於可視化，同時保持梯度流
         """
-        # 儲存輸入
-        self.layer_outputs['input'] = observations.detach().cpu().numpy()
+        # 儲存輸入（僅用於可視化）
+        with torch.no_grad():
+            self.layer_outputs['input'] = observations.cpu().numpy()
         
-        # 監控各層梯度
-        def register_grad_hook(name):
-            def hook(grad):
-                self._log_gradient(grad, name)
-            return hook
-        
-        # 為主要層註冊梯度鉤子
-        if self.training:
-            observations.requires_grad_(True)
-            observations.register_hook(register_grad_hook('input'))
-            
-            # 為 ResNet 的主要層註冊梯度鉤子
-            self.extractor.conv1.weight.register_hook(register_grad_hook('conv1'))
-            for i, layer in enumerate(self.extractor.layer4):
-                layer.conv1.weight.register_hook(register_grad_hook(f'layer4_{i}_conv1'))
-                layer.conv2.weight.register_hook(register_grad_hook(f'layer4_{i}_conv2'))
-        
-        # 通過特徵提取器
+        # 通過特徵提取器並保持梯度流
         features = self.extractor(observations)
         
-        # 儲存最終特徵輸出
-        self.layer_outputs['features_output'] = features.detach().cpu().numpy()
+        # 儲存最終特徵輸出（僅用於可視化）
+        with torch.no_grad():
+            self.layer_outputs['features_output'] = features.cpu().numpy()
         
-        # 監控最終特徵梯度
-        if self.training and features.requires_grad:
-            features.register_hook(register_grad_hook('final_features'))
+        # 在訓練模式下註冊梯度鉤子
+        if self.training:
+            # 只為需要梯度的張量註冊鉤子
+            if observations.requires_grad:
+                observations.register_hook(self._get_gradient_hook('input'))
+            if features.requires_grad:
+                features.register_hook(self._get_gradient_hook('final_features'))
             
         return features
         
+    def _get_gradient_hook(self, name):
+        """
+        創建一個梯度鉤子函數
+        只記錄梯度而不修改它
+        """
+        def hook(grad):
+            self._log_gradient(grad, name)
+            return grad  # 返回原始梯度，不做修改
+        return hook
+        
     def _log_gradient(self, grad, name):
         """記錄梯度信息"""
-        if grad is not None:
+        if grad is not None and self.training:
             # 計算梯度統計
             grad_norm = grad.norm().item()
             grad_mean = grad.mean().item()
@@ -112,7 +121,8 @@ class PretrainedResNet(BaseFeaturesExtractor):
 class TemporalModule(nn.Module):
     """
     時序處理模組
-    使用LSTM處理連續10幀的特徵序列
+    使用LSTM處理連續50幀的特徵序列，從300幀中每6幀採樣一次
+    用於捕捉智能體行為的時序依賴關係
     """
     def __init__(self, input_dim, hidden_dim=256, num_layers=1):
         super(TemporalModule, self).__init__()
@@ -190,22 +200,19 @@ class CustomPolicy(ActorCriticPolicy):
         
         # 設置不同的學習率
         self.optimizer = torch.optim.Adam([
-            {'params': self.features_extractor.parameters(), 'lr': lr_schedule(1) * 0.1},  # 特徵提取器使用較大學習率
+            {'params': self.features_extractor.parameters(), 'lr': lr_schedule(1) * 1.0},  # 特徵提取器使用標準學習率
             {'params': self.action_net.parameters()},
             {'params': self.value_net.parameters()}
         ], lr=lr_schedule(1))
-        
-        print("\n優化器設置:")
         for param_group in self.optimizer.param_groups:
             print(f"參數組學習率: {param_group['lr']}")
         self.action_logits = None
         self.layer_outputs = None
         
-        # 初始化特徵緩衝區，用於存儲最近60幀的特徵
-        self.feature_buffer = []
-        self.buffer_size = 300  # 存儲幀
-        self.sample_interval = 6  # 每取幀
-        self.temporal_size = 50  # 時序輸入幀
+        # 初始化時序特徵相關參數
+        self.buffer_size = 300  # 存儲最近300幀的特徵
+        self.sample_interval = 6  # 每6幀取1幀
+        self.temporal_size = 50  # 使用50幀作為時序輸入
     
     def _get_env(self):
         """
@@ -243,30 +250,104 @@ class CustomPolicy(ActorCriticPolicy):
     def _get_temporal_features(self, features):
         """
         處理特徵緩衝區並返回時序特徵
-        使用純向量操作每6幀取1幀，總共取10幀來觀察前60幀的狀態
+        
+        工作流程：
+        1. 獲取特徵維度信息
+        2. 檢查是否需要重置緩存（新世代/首次調用/配置改變）
+        3. 如果需要重置，則清理舊緩存並初始化新緩存
+        4. 更新特徵緩衝區，保持梯度流
+        5. 返回採樣後的時序特徵
+        
+        特徵處理：
+        - 維護一個300幀的滑動窗口
+        - 每6幀採樣一次，總共採樣50幀
+        - 在訓練時保持梯度流
+        - 在新世代時重置緩存
         """
         # 獲取當前特徵的batch size和特徵維度
         batch_size = features.shape[0]
         feature_dim = features.shape[1]
         
-        # 創建零填充的特徵張量
-        if not hasattr(self, 'feature_buffer_tensor') or self.feature_buffer_tensor.shape[0] != batch_size:
-            self.feature_buffer_tensor = torch.zeros((batch_size, self.buffer_size, feature_dim),
-                                                   dtype=features.dtype,
-                                                   device=features.device)
+        # 如果需要重置緩存，則進行重置
+        if self._need_buffer_reset(features, batch_size):
+            self._reset_buffers(features, batch_size, feature_dim)
         
-        # 向左移動特徵緩衝區並添加新特徵
-        self.feature_buffer_tensor = torch.cat([
-            self.feature_buffer_tensor[:, 1:],
-            features.unsqueeze(1)
-        ], dim=1)
-        
-        # 使用步長為6的切片操作選取10幀
-        indices = torch.arange(self.buffer_size - 1, -1, -self.sample_interval, device=features.device)[:self.temporal_size]
-        temporal_features = self.feature_buffer_tensor[:, indices]
+        # 更新特徵緩衝區並獲取時序特徵
+        temporal_features = self._update_feature_buffer(features)
         
         return temporal_features
 
+    def _reset_buffers(self, features, batch_size, feature_dim):
+        """
+        重置所有緩存
+        清理舊的緩存並初始化新的緩存
+        """
+        # 清理舊的緩存
+        for attr in ['feature_buffer_tensor', 'temporal_indices']:
+            if hasattr(self, attr):
+                delattr(self, attr)
+        
+        # 初始化新的緩存
+        self._initialize_buffers(features, batch_size, feature_dim)
+        
+    def _update_feature_buffer(self, features):
+        """
+        更新特徵緩衝區並返回時序特徵
+        根據訓練模式決定是否保持梯度流
+        """
+        if self.training:
+            self.feature_buffer_tensor = torch.cat([
+                self.feature_buffer_tensor[:, 1:],
+                features.unsqueeze(1)
+            ], dim=1)
+            temporal_features = self.feature_buffer_tensor[:, self.temporal_indices]
+        else:
+            with torch.no_grad():
+                self.feature_buffer_tensor = torch.cat([
+                    self.feature_buffer_tensor[:, 1:],
+                    features.unsqueeze(1)
+                ], dim=1)
+                temporal_features = self.feature_buffer_tensor[:, self.temporal_indices]
+        return temporal_features
+        
+    def _initialize_buffers(self, features, batch_size, feature_dim):
+        """
+        初始化特徵緩衝區和時序索引
+        根據當前特徵的屬性設置緩存參數
+        """
+        with torch.no_grad():
+            # 創建特徵緩衝區
+            self.feature_buffer_tensor = torch.zeros(
+                (batch_size, self.buffer_size, feature_dim),
+                dtype=features.dtype,
+                device=features.device,
+                requires_grad=self.training
+            )
+            
+            # 創建時序採樣索引
+            self.temporal_indices = torch.arange(
+                self.buffer_size - 1, -1, -self.sample_interval,
+                device=features.device
+            )[:self.temporal_size]
+            
+    def _need_buffer_reset(self, features, batch_size):
+        """
+        檢查是否需要重置特徵緩衝區
+        在以下情況下需要重置：
+        1. 新世代開始
+        2. 首次調用（緩衝區不存在）
+        3. batch size改變
+        4. 設備改變
+        """
+        return (
+            self._is_new_epoch() or  # 新世代開始
+            not hasattr(self, 'feature_buffer_tensor') or  # 首次調用
+            self.feature_buffer_tensor.shape[0] != batch_size or  # batch size改變
+            not hasattr(self, 'temporal_indices') or  # 首次調用
+            (hasattr(self, 'temporal_indices') and  # 設備改變
+             self.temporal_indices.device != features.device)
+        )
+        
     def _is_new_epoch(self):
         """
         檢查是否為新的世代開始
@@ -283,11 +364,6 @@ class CustomPolicy(ActorCriticPolicy):
         前向傳播函數
         處理觀察並生成行動、價值和對數概率
         """
-        # 檢查是否為新世代
-        if self._is_new_epoch():
-            if hasattr(self, 'feature_buffer_tensor'):
-                delattr(self, 'feature_buffer_tensor')
-        
         # 提取特徵
         features = self.extract_features(obs)
         self.layer_outputs = self.features_extractor.layer_outputs
@@ -311,14 +387,15 @@ class CustomPolicy(ActorCriticPolicy):
         # 計算對數概率
         log_probs = action_dist.log_prob(actions)
         
-        # 收集所有層輸出用於可視化
-        layer_outputs = {
-            'input': self.features_extractor.layer_outputs['input'],
-            'conv1_output': self.features_extractor.layer_outputs['conv1_output'],
-            'final_residual_output': self.features_extractor.layer_outputs['final_residual_output'],
-            'features_output': self.features_extractor.layer_outputs['features_output'],
-            'actor_output': self.action_logits.detach().cpu().numpy()
-        }
+        # 收集所有層輸出用於可視化（不影響梯度流）
+        with torch.no_grad():
+            layer_outputs = {
+                'input': self.features_extractor.layer_outputs['input'],
+                'conv1_output': self.features_extractor.layer_outputs['conv1_output'],
+                'final_residual_output': self.features_extractor.layer_outputs['final_residual_output'],
+                'features_output': self.features_extractor.layer_outputs['features_output'],
+                'actor_output': self.action_logits.cpu().numpy()
+            }
         
         # 更新環境中的層輸出
         env = self._get_env()
