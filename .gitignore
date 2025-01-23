@@ -16,3 +16,4 @@ mlagent.code-workspace
 *.png
 *.meta
 *.bmp
+*.csv

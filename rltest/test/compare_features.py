@@ -21,7 +21,7 @@ plt.rcParams['axes.unicode_minus'] = False
 def load_sequential_observations():
     """從訓練數據中獲取連續60張觀察影像，並按照每6幀取1幀的方式採樣10幀"""
     # 初始化 DataReader
-    data_reader = DataReader(base_dir="E:/train_log0118")
+    data_reader = DataReader(base_dir="C:/Users/AGI001/RescueRL-Bot1/rltest/train_log")
     
     # 獲取所有可用的世代
     epochs = data_reader.get_all_epochs()
@@ -201,12 +201,15 @@ def analyze_temporal_features(model, features):
                 print(f"  數據標準差: {data_std:.6f}")
                 return temporal_features
 
+            # 標準化數據以避免數值計算問題
+            normalized_data = (reshaped_data - np.mean(reshaped_data, axis=0)) / (np.std(reshaped_data, axis=0) + 1e-10)
+            
             # 計算相關性
-            temporal_corr = np.corrcoef(reshaped_data.T)
+            temporal_corr = np.corrcoef(normalized_data.T)
             
             # 檢查相關係數矩陣是否有效
-            if np.any(np.isnan(temporal_corr)):
-                print("  警告: 相關係數計算出現NaN值")
+            if np.any(np.isnan(temporal_corr)) or np.any(np.isinf(temporal_corr)):
+                print("  警告: 相關係數計算出現無效值")
                 print("  可能原因: 數據中存在常數列或標準差為零的列")
                 return temporal_features
             
@@ -407,27 +410,51 @@ def compare_features(model_paths):
     plt.close()
     
     # 計算並視覺化特徵相關性
-    plt.figure(figsize=(10, 8))
-    correlation_matrix = np.corrcoef([f.flatten() for f in all_features])
-    plt.imshow(correlation_matrix, cmap='coolwarm', vmin=-1, vmax=1)
-    plt.colorbar()
-    plt.xticks(range(len(model_names)), model_names, rotation=45)
-    plt.yticks(range(len(model_names)), model_names)
-    plt.title('模型特徵相關性矩陣')
-    plt.tight_layout()
-    # 確保輸出目錄存在
-    output_dir = "analysis_results"
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(os.path.join(output_dir, 'feature_correlation.png'))
-    plt.close()
+    if len(all_features) < 2:
+        print("警告: 需要至少兩個模型的特徵才能計算相關性")
+        return
+
+    # 檢查特徵數據是否有效
+    for features in all_features:
+        if np.any(np.isnan(features)) or np.any(np.isinf(features)):
+            print("警告: 特徵中包含無效值(NaN/Inf)")
+            return
+        
+    try:
+        # 確保特徵向量被正確展平且標準化
+        flattened_features = [f.flatten() for f in all_features]
+        # 添加小的常數避免除以零
+        correlation_matrix = np.corrcoef(flattened_features)
+        
+        # 檢查相關性矩陣是否有效
+        if correlation_matrix.size == 0 or np.any(np.isnan(correlation_matrix)):
+            print("警告: 無法計算有效的相關性矩陣")
+            return
+            
+        plt.figure(figsize=(10, 8))
+        plt.imshow(correlation_matrix, cmap='coolwarm', vmin=-1, vmax=1)
+        plt.colorbar()
+        plt.xticks(range(len(model_names)), model_names, rotation=45)
+        plt.yticks(range(len(model_names)), model_names)
+        plt.title('模型特徵相關性矩陣')
+        plt.tight_layout()
+        
+        # 確保輸出目錄存在
+        output_dir = "analysis_results"
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(os.path.join(output_dir, 'feature_correlation.png'))
+        plt.close()
+        
+    except Exception as e:
+        print(f"計算相關性矩陣時發生錯誤: {str(e)}")
 
 def main():
     try:
         # 設定模型路徑
         model_paths = [
-            "E:/train_log0118/models/ppo_crawler_ep100.zip",   # 訓練前的模型
-            "E:/train_log0118/models/ppo_crawler_ep2000.zip",  # 訓練中期的模型
-            "E:/train_log0118/models/ppo_crawler_ep3000.zip"  # 訓練後期的模型
+            "C:/Users/AGI001/RescueRL-Bot1/rltest/models/ppo_crawler_ep010.zip",   # 訓練前的模型
+            "C:/Users/AGI001/RescueRL-Bot1/rltest/models/ppo_crawler_ep020.zip",  # 訓練中期的模型
+            "C:/Users/AGI001/RescueRL-Bot1/rltest/models/ppo_crawler_ep030.zip"  # 訓練後期的模型
         ]
         
         # 檢查模型文件是否存在
@@ -436,7 +463,7 @@ def main():
                 print(f"警告: 模型文件不存在: {path}")
         
         # 檢查訓練日誌目錄
-        train_log_dir = "E:/train_log0118"
+        train_log_dir = "C:/Users/AGI001/RescueRL-Bot1/rltest/train_log"
         if not os.path.exists(train_log_dir):
             raise FileNotFoundError(f"找不到訓練日誌目錄: {train_log_dir}")
         
