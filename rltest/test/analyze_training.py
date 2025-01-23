@@ -3,17 +3,26 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
-def load_training_data(file_path='training_results.csv'):
-    """載入訓練資料"""
+def load_training_data(file_path='training_results.csv', steps_threshold=None):
+    """載入訓練資料
+    
+    Args:
+        file_path: CSV檔案路徑
+        steps_threshold: 步數閾值，用於過濾實際上不是成功的結果
+    """
     # 讀取 CSV 檔案
     df = pd.read_csv(file_path)
+    
+    # 如果設定了步數閾值，將超過閾值的「成功」案例標記為失敗
+    if steps_threshold is not None:
+        df.loc[(df['是否成功'] == 1) & ((df['總步數'] - df['成功步數']) > steps_threshold), '是否成功'] = 0
     
     # 計算累積成功率
     df['cumulative_success_rate'] = df['是否成功'].cumsum() / (df.index + 1) * 100
     
     return df
 
-def plot_training_analysis(df):
+def plot_training_analysis(df, steps_threshold=None):
     """繪製訓練分析圖表"""
     # 設定中文字型
     plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
@@ -21,7 +30,10 @@ def plot_training_analysis(df):
     
     # 創建一個 2x2 的子圖
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('訓練結果分析', fontsize=16)
+    title = '訓練結果分析'
+    if steps_threshold is not None:
+        title += f' (步數閾值: {steps_threshold})'
+    fig.suptitle(title, fontsize=16)
     
     # 1. 步數分布圖
     sns.boxplot(x='是否成功', y='總步數', data=df, ax=ax1)
@@ -58,14 +70,14 @@ def plot_training_analysis(df):
     else:
         ax3.text(0.5, 0.5, '尚無成功資料', ha='center', va='center')
     
-    # 4. 執行時間趨勢
-    ax4.plot(df.index, df['執行時間'], 'r-')
+    # 4. 最小距離與世代關係
+    ax4.plot(df.index, df['最小距離'], 'b-')
     if len(df) >= window_size:
-        rolling_time = df['執行時間'].rolling(window=window_size).mean()
-        ax4.plot(df.index, rolling_time, 'b-', label=f'{window_size}世代移動平均')
-    ax4.set_title('執行時間趨勢')
+        rolling_distance = df['最小距離'].rolling(window=window_size).mean()
+        ax4.plot(df.index, rolling_distance, 'r-', label=f'{window_size}世代移動平均')
+    ax4.set_title('最小距離趨勢')
     ax4.set_xlabel('世代')
-    ax4.set_ylabel('執行時間 (秒)')
+    ax4.set_ylabel('最小距離')
     ax4.grid(True)
     ax4.legend()
     
@@ -93,6 +105,7 @@ def print_statistics(df):
         print(f"  成功時的平均步數: {success_steps.mean():.2f}")
         print(f"  最快成功步數: {success_steps.min():.0f}")
         print(f"  最慢成功步數: {success_steps.max():.0f}")
+        
         if len(success_steps) >= 10:
             recent_steps = success_steps.tail(10).mean()
             print(f"  最近10次成功的平均步數: {recent_steps:.2f}")
@@ -105,11 +118,14 @@ def print_statistics(df):
 
 def main():
     try:
+        # 設定步數閾值（可以根據需要調整）
+        steps_threshold = 100  # 總步數與成功步數的差異閾值
+        
         # 載入資料
-        df = load_training_data()
+        df = load_training_data('E:/train_log0118/training_results.csv', steps_threshold)
         
         # 繪製分析圖表
-        plot_training_analysis(df)
+        plot_training_analysis(df, steps_threshold)
         print("分析圖表已儲存為 'training_analysis.png'")
         
         # 輸出統計資訊

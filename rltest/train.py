@@ -10,7 +10,7 @@ from policy import CustomPolicy
 from logger import TrainLog
 
 class EnhancedEpisodeCallback(BaseCallback):
-    def __init__(self, train_logger, save_freq=1, verbose=1):
+    def __init__(self, train_logger, model_dir, save_freq=1, verbose=1):
         super(EnhancedEpisodeCallback, self).__init__(verbose)
         self.save_freq = save_freq
         self.last_epoch = 0
@@ -21,6 +21,8 @@ class EnhancedEpisodeCallback(BaseCallback):
         self.update_interval = 5  # 每5步更新一次顯示
         self.last_update_time = time.time()
         self.last_step = 0
+        self.model_dir = model_dir
+        
     def _on_step(self) -> bool:
         self.n_calls += 1
         
@@ -99,13 +101,13 @@ class EnhancedEpisodeCallback(BaseCallback):
     def _save_model(self, epoch):
         """安全地將模型保存到檔案"""
         try:
-            path = f"models/ppo_crawler_ep{epoch:03d}.zip"
+            path = os.path.join(self.model_dir, f"ppo_crawler_ep{epoch:03d}.zip")
             self.model.save(path)
             print(f"\n模型已保存: {path}")
         except Exception as e:
             self._logger.log_error(e)
 
-def get_latest_epoch(model_dir="models"):
+def get_latest_epoch(model_dir):
     """獲取最新的訓練世代號碼"""
     try:
         if not os.path.exists(model_dir):
@@ -150,8 +152,12 @@ def signal_handler(sig, frame):
 # 註冊信號處理器
 signal.signal(signal.SIGINT, signal_handler)
 
-def main():
-    """主訓練函數"""
+def main(model_dir="models"):
+    """主訓練函數
+    
+    Args:
+        model_dir: 模型保存的目錄路徑，默認為 "models"
+    """
     global env, model, callback, logger
     
     try:
@@ -159,7 +165,7 @@ def main():
         logger = TrainLog()
         
         # 獲取最新的訓練世代
-        current_epoch = get_latest_epoch()
+        current_epoch = get_latest_epoch(model_dir)
         print(f"從 epoch {current_epoch} 開始訓練")
         
         # 初始化訓練環境
@@ -192,7 +198,7 @@ def main():
         }
         
         # 檢查並載入現有模型或創建新模型
-        latest_model_path = f"models/ppo_crawler_ep{current_epoch:03d}.zip"
+        latest_model_path = os.path.join(model_dir, f"ppo_crawler_ep{current_epoch:03d}.zip")
         if os.path.exists(latest_model_path):
             print(f"載入之前的模型: {latest_model_path}")
             try:
@@ -208,7 +214,7 @@ def main():
             model.policy.env = env
 
         # 初始化訓練回調
-        callback = EnhancedEpisodeCallback(train_logger=logger, save_freq=1)
+        callback = EnhancedEpisodeCallback(train_logger=logger, model_dir=model_dir, save_freq=1)
         
         # 設置總訓練步數
         total_timesteps = 10_000_000
@@ -242,4 +248,4 @@ def main():
                 print(f"清理資源時發生錯誤: {e}")
 
 if __name__ == "__main__":
-    main()
+    main('E:/train_log0118/models')

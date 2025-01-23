@@ -13,3 +13,4 @@ DataSplit.py
 DataDecompress.py
 output
 mlagent.code-workspace
+*.png
