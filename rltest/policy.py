@@ -210,9 +210,9 @@ class CustomPolicy(ActorCriticPolicy):
         self.layer_outputs = None
         
         # 初始化時序特徵相關參數
-        self.buffer_size = 300  # 存儲最近300幀的特徵
+        self.buffer_size = 60  # 存儲最近60幀的特徵
         self.sample_interval = 6  # 每6幀取1幀
-        self.temporal_size = 50  # 使用50幀作為時序輸入
+        self.temporal_size = 10  # 使用10幀作為時序輸入
     
     def _get_env(self):
         """
