@@ -152,7 +152,7 @@ def signal_handler(sig, frame):
 # 註冊信號處理器
 signal.signal(signal.SIGINT, signal_handler)
 
-def main(model_dir="models"):
+def main(model_dir="E:/train_log0118/models"):
     """主訓練函數
     
     Args:
@@ -173,7 +173,9 @@ def main(model_dir="models"):
             show=False,              # 是否顯示視覺化界面
             epoch=current_epoch,     # 當前訓練世代
             test_mode=False,         # 是否為測試模式
-            save_interval=50         # 數據保存間隔
+            feature_save_interval=500,  # 模型特徵保存間隔
+            image_save_interval=100,     # 圖像資料保存間隔
+            reward_save_interval=1     # 獎勵資料保存間隔
         )
         
         # 設置PPO模型參數
@@ -214,7 +216,7 @@ def main(model_dir="models"):
             model.policy.env = env
 
         # 初始化訓練回調
-        callback = EnhancedEpisodeCallback(train_logger=logger, model_dir=model_dir, save_freq=1)
+        callback = EnhancedEpisodeCallback(train_logger=logger, model_dir=model_dir, save_freq=50)
         
         # 設置總訓練步數
         total_timesteps = 10_000_000

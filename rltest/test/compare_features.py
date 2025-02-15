@@ -18,10 +18,10 @@ from scipy.stats import skew, kurtosis, entropy, gaussian_kde
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-def load_sequential_observations():
+def load_sequential_observations(train_log_dir):
     """從訓練數據中獲取連續60張觀察影像，並按照每6幀取1幀的方式採樣10幀"""
     # 初始化 DataReader
-    data_reader = DataReader(base_dir="C:/Users/AGI001/RescueRL-Bot1/rltest/train_log")
+    data_reader = DataReader(base_dir=train_log_dir)
     
     # 獲取所有可用的世代
     epochs = data_reader.get_all_epochs()
@@ -308,10 +308,10 @@ def analyze_feature_statistics(features):
     }
     return stats_dict
 
-def compare_features(model_paths):
+def compare_features(model_paths,train_log_dir):
     """比較不同模型的特徵提取結果"""
     # 載入連續的觀察影像
-    images = load_sequential_observations()
+    images = load_sequential_observations(train_log_dir)
     
     # 儲存每個模型的特徵
     all_features = []
@@ -452,9 +452,9 @@ def main():
     try:
         # 設定模型路徑
         model_paths = [
-            "C:/Users/AGI001/RescueRL-Bot1/rltest/models/ppo_crawler_ep010.zip",   # 訓練前的模型
-            "C:/Users/AGI001/RescueRL-Bot1/rltest/models/ppo_crawler_ep020.zip",  # 訓練中期的模型
-            "C:/Users/AGI001/RescueRL-Bot1/rltest/models/ppo_crawler_ep030.zip"  # 訓練後期的模型
+            "E:/train_log0118/models/ppo_crawler_ep050.zip",   # 訓練前的模型
+            "E:/train_log0118/models/ppo_crawler_ep2000.zip",  # 訓練中期的模型
+            "E:/train_log0118/models/ppo_crawler_ep5650.zip"  # 訓練後期的模型
         ]
         
         # 檢查模型文件是否存在
@@ -463,12 +463,12 @@ def main():
                 print(f"警告: 模型文件不存在: {path}")
         
         # 檢查訓練日誌目錄
-        train_log_dir = "C:/Users/AGI001/RescueRL-Bot1/rltest/train_log"
+        train_log_dir = "E:/train_log0118/train_log"
         if not os.path.exists(train_log_dir):
             raise FileNotFoundError(f"找不到訓練日誌目錄: {train_log_dir}")
         
         # 執行特徵比較
-        compare_features(model_paths)
+        compare_features(model_paths,train_log_dir)
         print(f"\n分析結果已保存至 'analysis_results' 目錄")
         
     except Exception as e:

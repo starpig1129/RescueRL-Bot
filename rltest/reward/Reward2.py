@@ -23,7 +23,7 @@ class RewardFunction:
     
     # 類別常數
     TOUCH_THRESHOLD: float = 15.0
-    MAX_MOVEMENT_HISTORY: int = 150
+    MAX_MOVEMENT_HISTORY: int = 300
     ROTATION_THRESHOLD: float = 45.0
     VIEW_CENTER_THRESHOLD: float = 0.3
     
@@ -48,9 +48,11 @@ class RewardFunction:
     def reset(self) -> None:
         """重置所有狀態變數。"""
         # 視角相關變數
-        self._prev_view_distance: float = 0.0  # 前一幀的視野距離
-        self._prev_entity_distance: float = 0.0  # 前一幀的實體距離
-        self._has_seen_target: bool = True  # 是否曾經看見目標
+        self._view_distance_history = [] # 視野距離歷史記錄
+        self._prev_view_distance_mean: float = 0.0  # 歷史幀的平均視野距離
+        self._entity_distance_history = []  # 實體距離歷史記錄
+        self._prev_entity_distance_mean: float = 0.0  # 歷史幀的平均實體距離
+        self._has_seen_target: bool = False  # 是否曾經看見目標
         self._last_position: List[float] = [0.0, 0.0, 0.0]  # 上一次的位置
         
         # 碰觸獎勵相關變數
@@ -113,21 +115,30 @@ class RewardFunction:
             )
             
             # 根據目標位置給予獎勵或懲罰
+            self._view_distance_history.append(current_view_distance)
+            if len(self._view_distance_history) > self.MAX_MOVEMENT_HISTORY:
+                self._view_distance_history.pop(0)
+                
+            view_mean = np.mean(self._view_distance_history)
+            view_std = np.std(self._view_distance_history)
+            view_threshold = view_mean + view_std
+            
             if current_view_distance <= self.VIEW_CENTER_THRESHOLD:
-                center_reward = 1.0 - (current_view_distance / self.VIEW_CENTER_THRESHOLD)
-                if current_view_distance < self._prev_view_distance:
-                    center_approach_reward = center_reward
+                # 標準化獎勵計算
+                normalized_distance = current_view_distance / self.VIEW_CENTER_THRESHOLD
+                if current_view_distance < view_mean:
+                    center_approach_reward = min(1.0, 1.0 - normalized_distance)
             else:
-                if current_view_distance < self._prev_view_distance:
-                    center_approach_reward = 0.5
-                elif current_view_distance > self._prev_view_distance:
-                    center_leave_penalty = -0.5
-                    
-            self._prev_view_distance = current_view_distance
+                if current_view_distance > view_threshold:
+                    center_leave_penalty = -min(1.0, (current_view_distance - view_threshold) / view_threshold)
+            
+            self._prev_view_distance_mean = np.mean(self._view_distance_history)
         else:
-            self._continuous_view_count = 0
             if self._has_seen_target:
-                lost_view_penalty = -0.5
+                # 使用連續觀察計數計算漸進式視野丟失懲罰
+                view_loss_factor = min(2.0, 1.0 + self._continuous_view_count / 50.0)
+                lost_view_penalty = -view_loss_factor
+            self._continuous_view_count = 0
 
         return in_view_reward, center_approach_reward, center_leave_penalty, lost_view_penalty
 
@@ -162,15 +173,30 @@ class RewardFunction:
 
         current_distance = np.sqrt((x1 - x2) ** 2 + (z1 - z2) ** 2)
         
-        if self._prev_entity_distance > 0:
-            distance_change = (self._prev_entity_distance - current_distance) / self._prev_entity_distance
-            approach_reward = max(0.0, distance_change)
-            leave_penalty = min(0.0, distance_change)
-        else:
-            approach_reward = 0.0
-            leave_penalty = 0.0
+        self._entity_distance_history.append(current_distance)
+        if len(self._entity_distance_history) > self.MAX_MOVEMENT_HISTORY:
+            self._entity_distance_history.pop(0)
+            
+        # 初始化回傳值
+        approach_reward = 0.0
+        leave_penalty = 0.0
         
-        self._prev_entity_distance = current_distance
+        if self._prev_entity_distance_mean > 0 and self._entity_distance_history:
+            distance_mean = np.mean(self._entity_distance_history)
+            distance_std = np.std(self._entity_distance_history)
+            distance_threshold = distance_mean + distance_std
+            
+            # 計算距離變化率
+            distance_change = (self._prev_entity_distance_mean - current_distance) / distance_threshold
+            
+            # 標準化獎勵和懲罰計算
+            if current_distance < distance_mean:
+                approach_reward = min(1.0, max(0.0, distance_change))
+            elif current_distance > distance_mean:
+                leave_penalty = min(0.0, -min(1.0, distance_change))
+        
+        self._prev_entity_distance_mean = np.mean(self._entity_distance_history)
+        
         return approach_reward, leave_penalty
 
     def calculate_movement_rewards(self, current_position: Dict[str, float]) -> Tuple[float, float]:

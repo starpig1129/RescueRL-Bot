@@ -25,13 +25,15 @@ normalize = transforms.Normalize(
 )
 
 class CrawlerEnv(gym.Env):
-    def __init__(self, show, epoch=0, test_mode=False, save_interval=1):
+    def __init__(self, show, epoch=0, test_mode=False, feature_save_interval=100, image_save_interval=50, reward_save_interval=1):
         super(CrawlerEnv, self).__init__()
         
         # 基本設置
         self.show = show
         self.test_mode = test_mode
-        self.save_interval = save_interval
+        self.feature_save_interval = feature_save_interval
+        self.image_save_interval = image_save_interval
+        self.reward_save_interval = reward_save_interval
         self.should_save = False
         self.last_reward_list = None
         self.last_update_time = time.time()
@@ -42,7 +44,7 @@ class CrawlerEnv(gym.Env):
         self.min_distance = float('inf')  # 追蹤最小距離
         
         # 任務完成記錄
-        self.success_log_file = 'train_log/training_results.csv'
+        self.success_log_file = 'E:/train_log0118/training_results.csv'
         self.found_target = False
         self.success_step = 0
         self.start_time = None  # 初始化世代開始時間變數
@@ -77,12 +79,14 @@ class CrawlerEnv(gym.Env):
         self._init_socket_vars()
         
         # 資料處理相關設置
-        base_dir = "test_logs" if test_mode else "train_log"
+        base_dir = "test_logs" if test_mode else "E:/train_log0118/train_log"
         self.logger = TrainLog()
         self.data_handler = DataHandler(
             base_dir=base_dir,
             logger=self.logger,
-            feature_save_interval=10
+            feature_save_interval=self.feature_save_interval,
+            image_save_interval=self.image_save_interval,
+            reward_save_interval=self.reward_save_interval
         )
         self.epoch = epoch
         self.step_count = 0
@@ -336,7 +340,7 @@ class CrawlerEnv(gym.Env):
             # 重置獎勵函數的狀態
             self.reward_function.reset()
             
-            self.should_save = (self.epoch % self.save_interval) == 0
+            self.should_save = True  # 移除儲存間隔檢查，由DataHandler控制儲存頻率
             
             if self.should_save:
                 self.data_handler.create_epoch_file(self.epoch)

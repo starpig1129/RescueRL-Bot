@@ -44,8 +44,9 @@ def plot_training_analysis(df, steps_threshold=None):
     # 2. 成功率趨勢
     window_size = 50  # 移動平均窗口大小
     rolling_success_rate = df['是否成功'].rolling(window=window_size).mean() * 100
-    ax2.plot(df.index, df['cumulative_success_rate'], 'b-', label='累積成功率')
-    ax2.plot(df.index, rolling_success_rate, 'r-', label=f'{window_size}世代移動平均')
+    ax2.plot(df.index[100:], df['cumulative_success_rate'][100:], 'b-', label='累積成功率')
+    ax2.set_ylim(0, 10)
+    #ax2.plot(df.index, rolling_success_rate, 'r-', label=f'{window_size}世代移動平均')
     ax2.set_title('成功率趨勢')
     ax2.set_xlabel('世代')
     ax2.set_ylabel('成功率 (%)')
@@ -122,7 +123,7 @@ def main():
         steps_threshold = 200  # 總步數與成功步數的差異閾值
         
         # 載入資料
-        df = load_training_data('C:/Users/AGI001/RescueRL-Bot1/rltest/train_log/training_results.csv', steps_threshold)
+        df = load_training_data('E:/train_log0118/training_results.csv', steps_threshold)
         
         # 繪製分析圖表
         plot_training_analysis(df, steps_threshold)

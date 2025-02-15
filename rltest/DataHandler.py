@@ -20,17 +20,21 @@ class DataHandler:
     - 提供詳細的數據保存統計
     """
     
-    def __init__(self, base_dir: str = "train_logs", feature_save_interval: int = 10, logger=None):
+    def __init__(self, base_dir: str = "train_logs", feature_save_interval: int = 10, image_save_interval: int = 5, reward_save_interval: int = 1, logger=None):
         """
         初始化數據處理器
         
         參數：
             base_dir: 數據保存的基礎目錄
-            feature_save_interval: 特徵保存的間隔步數
+            feature_save_interval: 模型特徵保存的間隔步數
+            image_save_interval: 圖像類數據保存的間隔步數
+            reward_save_interval: reward等小型數據保存的間隔步數
             logger: 日誌記錄器實例
         """
         self.base_dir = base_dir
         self.feature_save_interval = feature_save_interval
+        self.image_save_interval = image_save_interval
+        self.reward_save_interval = reward_save_interval
         self.logger = logger
         
         # 創建環境數據和特徵數據的子目錄
@@ -333,12 +337,49 @@ class DataHandler:
                 'results': results
             }
             
-            # 確定是否需要保存特徵數據
+            # 判斷各種數據類型是否需要保存
+            should_save_rewards = ((step-1) % self.reward_save_interval) == 0
+            should_save_images = ((step-1) % self.image_save_interval) == 0
             should_save_features = ((step-1) % self.feature_save_interval) == 0
-            
-            # 如果需要保存特徵，只保存第一個時序的數據
+
+            # 準備小型數據(reward相關)
+            if should_save_rewards:
+                self.env_datasets['angle_degrees'][step-1] = angle_degrees
+                self.env_datasets['reward'][step-1] = reward
+                self.env_datasets['reward_list'][step-1] = reward_list
+
+            # 準備圖像相關數據
+            if should_save_images and origin_image is not None:
+                self.env_datasets['origin_image'][step-1] = origin_image
+                
+                # 處理YOLO結果
+                if results is not None and hasattr(results, 'boxes'):
+                    try:
+                        if torch.is_tensor(results.boxes.xyxy):
+                            boxes = results.boxes.xyxy.cpu().numpy()
+                            scores = results.boxes.conf.cpu().numpy()
+                            classes = results.boxes.cls.cpu().numpy()
+                        else:
+                            boxes = results.boxes.xyxy
+                            scores = results.boxes.conf
+                            classes = results.boxes.cls
+
+                        boxes = self._pad_or_trim_array(boxes, (10, 4))
+                        scores = self._pad_or_trim_array(scores, (10,))
+                        classes = self._pad_or_trim_array(classes, (10,))
+
+                        self.env_datasets['yolo_boxes'][step-1] = boxes
+                        self.env_datasets['yolo_scores'][step-1] = scores
+                        self.env_datasets['yolo_classes'][step-1] = classes.astype(np.int32)
+                    except Exception as e:
+                        self._log_error(e)
+                        self.env_datasets['yolo_boxes'][step-1] = np.zeros((10, 4), dtype=np.float32)
+                        self.env_datasets['yolo_scores'][step-1] = np.zeros(10, dtype=np.float32)
+                        self.env_datasets['yolo_classes'][step-1] = np.zeros(10, dtype=np.int32)
+
+            # 準備特徵數據
             feature_data = None
-            if should_save_features and layer_outputs is not None:
+            if should_save_features and layer_outputs is not None:  
                 feature_data = {}
                 for name, tensor in layer_outputs.items():
                     if tensor is not None and name in self.feature_datasets:
