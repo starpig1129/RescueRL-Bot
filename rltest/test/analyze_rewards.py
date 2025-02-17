@@ -72,7 +72,7 @@ def plot_rewards(data_dir, start_epoch, end_epoch, interval=1, date_suffix=False
             executor.submit(
                 load_rewards_from_epoch, 
                 data_dir, epoch, interval, 
-                memory_monitor=True, 
+                memory_monitor=False, 
                 cache_dir=cache_dir
             ): epoch
             for epoch in range(start_epoch, end_epoch + 1)
@@ -149,7 +149,7 @@ def plot_rewards(data_dir, start_epoch, end_epoch, interval=1, date_suffix=False
         ax.scatter(steps, rewards, s=1, alpha=0.1, c='blue')
         
         # 計算移動平均
-        window_size = 50
+        window_size = 5000
         if len(rewards) >= window_size:
             moving_avg = pd.Series(rewards).rolling(window=window_size, center=True).mean()
             ax.plot(steps, moving_avg, 'r-', linewidth=2, label=f'{window_size}步移動平均')
@@ -183,7 +183,7 @@ def plot_rewards(data_dir, start_epoch, end_epoch, interval=1, date_suffix=False
     ax_total.plot(steps, total_rewards, 'k-', alpha=0.5, linewidth=1, label='總和獎勵')
     
     # 計算總和獎勵的移動平均
-    window_size = 50
+    window_size = 5000
     if len(total_rewards) >= window_size:
         total_moving_avg = pd.Series(total_rewards).rolling(window=window_size, center=True).mean()
         ax_total.plot(steps, total_moving_avg, 'r-', linewidth=3, label='總和獎勵移動平均')
