@@ -454,7 +454,7 @@ def main():
         model_paths = [
             "E:/train_log0118/models/ppo_crawler_ep050.zip",   # 訓練前的模型
             "E:/train_log0118/models/ppo_crawler_ep2000.zip",  # 訓練中期的模型
-            "E:/train_log0118/models/ppo_crawler_ep5650.zip"  # 訓練後期的模型
+            "E:/train_log0118/models/ppo_crawler_ep3850.zip"  # 訓練後期的模型
         ]
         
         # 檢查模型文件是否存在
