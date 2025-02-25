@@ -114,12 +114,64 @@ class CrawlerEnv(gym.Env):
         self.obs_conn = None
         self.reset_socket = None
         self.reset_conn = None
+        self.top_camera_socket = None
+        self.top_camera_conn = None
 
     def setup_all_servers(self):
         self.setup_control_server()
         self.setup_info_server()
         self.setup_obs_server()
         self.setup_reset_server()
+        self.setup_top_camera_server()
+
+    def setup_top_camera_server(self):
+        """設置頂部攝影機伺服器"""
+        self.top_camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.top_camera_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.top_camera_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.top_camera_address = ('localhost', 9000)
+        
+        try:
+            self.top_camera_socket.bind(self.top_camera_address)
+            self.top_camera_socket.listen(5)
+            print("頂部攝影機伺服器已啟動，等待連接...")
+            
+            self.top_camera_socket.settimeout(10)
+            self.top_camera_conn, self.top_camera_addr = self.top_camera_socket.accept()
+            self.top_camera_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            print("已連接到頂部攝影機:", self.top_camera_addr)
+        except Exception as e:
+            raise Exception(f"頂部攝影機伺服器設置失敗: {e}")
+
+    def receive_top_camera_image(self):
+        """接收頂部攝影機的影像"""
+        try:
+            image_len_bytes = self.recv_all(self.top_camera_conn, 4)
+            if not image_len_bytes:
+                return None
+
+            image_len = int.from_bytes(image_len_bytes, byteorder='little')
+            image_data = self.recv_all(self.top_camera_conn, image_len)
+            if not image_data:
+                return None
+
+            nparr = np.frombuffer(image_data, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if self.show:
+                cv2.imshow("頂部視角", image)
+                cv2.waitKey(1)
+                
+            return image
+
+        except Exception as e:
+            print(f"接收頂部攝影機影像時發生錯誤: {e}")
+            self.top_camera_conn, self.top_camera_addr = self.reconnect_socket(
+                self.top_camera_socket,
+                self.top_camera_address,
+                '頂部攝影機'
+            )
+            return None
 
     def setup_control_server(self):
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -260,6 +312,9 @@ class CrawlerEnv(gym.Env):
             results, obs, origin_image = self.receive_image()
             if obs is None:
                 return None, 0, True, {}
+            
+            # 接收頂部攝影機影像
+            top_view_image = self.receive_top_camera_image()
                 
             reward, reward_list = self.reward_function.get_reward(
                 detection_results=results,
@@ -287,9 +342,10 @@ class CrawlerEnv(gym.Env):
                         relative_angle,
                         reward,
                         reward_list,
-                        origin_image,
+                        origin_image,  
                         results,
-                        self.layer_outputs
+                        self.layer_outputs,
+                        top_view_image  
                     )
                 except Exception as e:
                     if self.logger:
@@ -552,7 +608,8 @@ class CrawlerEnv(gym.Env):
             ('control_conn', 'control_socket'),
             ('info_conn', 'info_socket'),
             ('obs_conn', 'obs_socket'),
-            ('reset_conn', 'reset_socket')
+            ('reset_conn', 'reset_socket'),
+            ('top_camera_conn', 'top_camera_socket')
         ]
         
         for conn_attr, socket_attr in connections:
