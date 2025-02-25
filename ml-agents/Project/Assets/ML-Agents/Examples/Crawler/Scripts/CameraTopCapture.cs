@@ -2,7 +2,6 @@ using UnityEngine;
 using System;
 using System.Net.Sockets;
 using System.IO;
-
 public class CameraTopCapture : MonoBehaviour
 {
     public Camera captureCamera;

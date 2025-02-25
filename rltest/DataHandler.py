@@ -121,6 +121,12 @@ class DataHandler:
                     dtype=np.uint8, 
                     chunks=chunk_size
                 ),
+                'top_view': self.env_file.create_dataset(
+                    'top_view', (initial_size, 480, 640, 3), 
+                    maxshape=(None, 480, 640, 3), 
+                    dtype=np.uint8, 
+                    chunks=(1, 480, 640, 3)
+                ),
                 'yolo_boxes': self.env_file.create_dataset(
                     'yolo_boxes', (initial_size, 10, 4), 
                     maxshape=(None, 10, 4), 
@@ -246,9 +252,10 @@ class DataHandler:
             self._log_error(e)
             raise
 
-    def save_step_data(self, step: int, obs: np.ndarray, angle_degrees: float, 
-                      reward: float, reward_list: List[float], origin_image: np.ndarray, 
-                      results: Any, layer_outputs: Dict[str, np.ndarray]) -> None:
+    def save_step_data(self, step: int, obs: np.ndarray, angle_degrees: float,
+                      reward: float, reward_list: List[float], origin_image: np.ndarray,
+                      results: Any, layer_outputs: Dict[str, np.ndarray],
+                      top_view_image: Optional[np.ndarray] = None) -> None:
         """保存一個步驟的數據"""
         try:
             # 準備環境數據
@@ -257,6 +264,7 @@ class DataHandler:
                 'reward': reward,
                 'reward_list': reward_list,
                 'origin_image': origin_image,
+                'top_view': top_view_image,
                 'results': results
             }
             
@@ -305,6 +313,10 @@ class DataHandler:
                 
                 self.env_datasets['origin_image'][idx] = env_data['origin_image']
                 self.env_datasets['image_step_map'][idx] = step
+                
+                # 如果有頂部視角影像，則一併保存
+                if env_data['top_view'] is not None:
+                    self.env_datasets['top_view'][idx] = env_data['top_view']
                 
                 # 處理YOLO結果
                 results = env_data['results']
