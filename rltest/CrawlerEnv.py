@@ -128,13 +128,12 @@ class CrawlerEnv(gym.Env):
         if self.loop.is_closed():
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
-        
+        self.setup_reset_server(),
         # 使用run_until_complete運行所有伺服器設置任務
         self.loop.run_until_complete(asyncio.gather(
             self.setup_control_server(),
             self.setup_info_server(),
             self.setup_obs_server(),
-            self.setup_reset_server(),
             self.setup_top_camera_server()
         ))
 
@@ -267,70 +266,64 @@ class CrawlerEnv(gym.Env):
         except Exception as e:
             raise Exception(f"影像接收伺服器設置失敗: {e}")
 
-    async def setup_reset_server(self):
+    def setup_reset_server(self):
         self.reset_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.reset_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.reset_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.reset_address = ('localhost', 7000)
-        self.reset_socket.setblocking(False)
         
         try:
             self.reset_socket.bind(self.reset_address)
             self.reset_socket.listen(5)
             print("重置訊號伺服器已啟動，等待連接...")
+            self.reset_socket.settimeout(10)
             
-            self.reset_event = asyncio.Event()
+            self.reset_event = threading.Event()
+            self.reset_thread_stop = threading.Event()
             
-            # 啟動非同步重置信號處理任務
-            self.reset_task = asyncio.create_task(self.accept_reset_connections())
-            # 將任務添加到列表中以防止垃圾回收
-            self.tasks.append(self.reset_task)
-            
+            self.reset_thread = threading.Thread(target=self.accept_reset_connections)
+            self.reset_thread.daemon = True
+            self.reset_thread.start()
         except Exception as e:
             raise Exception(f"重置伺服器設置失敗: {e}")
 
-    async def accept_reset_connections(self):
-        """非同步版本的重置連接處理"""
-        while True:  # 持續監聽重置連接
+    def accept_reset_connections(self):
+        while not self.reset_thread_stop.is_set():
             try:
-                # 非同步接受連接
-                reset_conn, reset_addr = await self.loop.sock_accept(self.reset_socket)
+                self.reset_socket.settimeout(1)
+                reset_conn, reset_addr = self.reset_socket.accept()
                 print("已連接到重置訊號發送端:", reset_addr)
                 
-                # 設置為非阻塞模式以進行非同步操作
-                reset_conn.setblocking(False)
-                
-                while True:
+                while not self.reset_thread_stop.is_set():
                     try:
-                        # 非同步接收數據
-                        signal_data = await self.loop.sock_recv(reset_conn, 4)
+                        signal_data = reset_conn.recv(4)
                         if not signal_data:
                             break
-                            
                         signal = int.from_bytes(signal_data, byteorder='little')
                         
                         if signal == 1:
                             epoch_data = self.epoch.to_bytes(4, byteorder='little')
                             try:
-                                # 非同步發送
-                                await self.loop.sock_sendall(reset_conn, epoch_data)
+                                reset_conn.send(epoch_data)
                                 print(f"向 Unity 發送當前 epoch: {self.epoch}")
                             except Exception as e:
                                 print(f"發送 epoch 到 Unity 時發生錯誤: {e}")
                             
-                            # 使用非同步事件
                             self.reset_event.set()
                             print(f"收到重置訊號，當前 epoch: {self.epoch}")
-                            
+                    except socket.timeout:
+                        continue
                     except Exception as e:
                         print(f"接收重置訊號時發生錯誤: {e}")
                         break
                         
                 reset_conn.close()
+            except socket.timeout:
+                continue
             except Exception as e:
-                print(f"重置連接發生錯誤: {e}")
-                # 短暫休眠以防止CPU佔用過高
-                await asyncio.sleep(0.1)
+                if not self.reset_thread_stop.is_set():
+                    print(f"重置連接發生錯誤: {e}")
+                continue
 
     def step(self, action):
         try:
