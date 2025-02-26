@@ -131,26 +131,53 @@ model = None    # PPO模型實例
 callback = None # 訓練回調實例
 logger = None   # 日誌實例
 
+def cleanup_resources():
+    """清理所有資源"""
+    global env, model, callback, logger
+    try:
+        if env is not None:
+            current_epoch = getattr(env, 'epoch', 0)
+            if callback is not None and current_epoch > 0:
+                try:
+                    callback._save_model(current_epoch)
+                except Exception as e:
+                    if logger:
+                        logger.log_error(f"保存模型時發生錯誤: {e}")
+            try:
+                env.close()
+            except Exception as e:
+                if logger:
+                    logger.log_error(f"關閉環境時發生錯誤: {e}")
+    except Exception as e:
+        if logger:
+            logger.log_error(f"清理資源時發生錯誤: {e}")
+        else:
+            print(f"清理資源時發生錯誤: {e}")
+    finally:
+        # 重置全局變量
+        env = None
+        model = None
+        callback = None
+        logger = None
+
 def signal_handler(sig, frame):
     """處理中斷信號"""
     print('\n收到中斷信號 (Ctrl+C)，正在關閉...')
-    try:
-        if env is not None:
-            current_epoch = env.epoch
-            # 在callback存在且epoch有效時保存模型
-            if callback is not None and current_epoch > 0 and hasattr(callback, '_save_model'):
-                callback._save_model(current_epoch)
-            env.close()
-    except Exception as e:
-        if logger is not None:
-            logger.log_error(e)
-        else:
-            print(f"關閉時發生錯誤: {e}")
-    finally:
-        sys.exit(0)
+    cleanup_resources()
+    sys.exit(0)
 
 # 註冊信號處理器
 signal.signal(signal.SIGINT, signal_handler)
+
+def register_signal_handlers():
+    """註冊所有需要處理的信號"""
+    # SIGINT (Ctrl+C)
+    signal.signal(signal.SIGINT, signal_handler)
+    # SIGTERM (終止信號)
+    signal.signal(signal.SIGTERM, signal_handler)
+    if sys.platform != 'win32':
+        # 在非Windows系統上註冊SIGQUIT
+        signal.signal(signal.SIGQUIT, signal_handler)
 
 def main(model_dir="E:/train_log0118/models"):
     """主訓練函數
@@ -184,7 +211,7 @@ def main(model_dir="E:/train_log0118/models"):
             "env": env,                     # 訓練環境
             "verbose": 0,                   # 設為0以禁用進度條
             "learning_rate": 3e-4,          # 學習率
-            "n_steps": 2048,               # 每次更新的步數
+            "n_steps": 600,               # 每次更新的步數
             "batch_size": 64,              # 批次大小
             "n_epochs": 10,                # 每次更新的訓練輪數
             "gamma": 0.99,                 # 折扣因子
@@ -233,21 +260,20 @@ def main(model_dir="E:/train_log0118/models"):
         
         print("\n訓練完成！")
         
+    except KeyboardInterrupt:
+        print("\n使用者中斷訓練")
     except Exception as e:
         if logger is not None:
-            logger.log_error(e)
+            logger.log_error(f"訓練過程中發生錯誤: {e}")
         else:
             print(f"訓練過程中發生錯誤: {e}")
     finally:
-        # 確保環境資源被正確釋放
-        try:
-            if env is not None:
-                env.close()
-        except Exception as e:
-            if logger is not None:
-                logger.log_error(e)
-            else:
-                print(f"清理資源時發生錯誤: {e}")
+        cleanup_resources()
 
 if __name__ == "__main__":
-    main()
+    try:
+        register_signal_handlers()
+        main()
+    except Exception as e:
+        print(f"程式執行時發生錯誤: {e}")
+        cleanup_resources()
