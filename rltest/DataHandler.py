@@ -122,10 +122,10 @@ class DataHandler:
                     chunks=chunk_size
                 ),
                 'top_view': self.env_file.create_dataset(
-                    'top_view', (initial_size, 480, 640, 3), 
-                    maxshape=(None, 480, 640, 3), 
+                    'top_view', (initial_size, 256, 256, 3), 
+                    maxshape=(None, 256, 256, 3), 
                     dtype=np.uint8, 
-                    chunks=(1, 480, 640, 3)
+                    chunks=(1, 256, 256, 3)
                 ),
                 'yolo_boxes': self.env_file.create_dataset(
                     'yolo_boxes', (initial_size, 10, 4), 
@@ -430,46 +430,54 @@ class DataHandler:
         return arr
 
     def close_epoch_file(self) -> None:
+        """安全地關閉當前的時期文件"""
         try:
-            while not self.write_queue.empty():
-                try:
-                    data = self.write_queue.get_nowait()
-                    self._write_data_to_hdf5(data)
-                except queue.Empty:
-                    break
-                except Exception as e:
-                    self._log_error(e)
-
+            # 1. 首先停止寫入線程
             if hasattr(self, 'stop_event'):
                 self.stop_event.set()
             
+            # 2. 等待寫入線程完成
             if hasattr(self, 'writer_thread') and self.writer_thread is not None:
                 self.writer_thread.join(timeout=5)
             
+            # 3. 處理剩餘的數據
+            try:
+                while not self.write_queue.empty():
+                    data = self.write_queue.get_nowait()
+                    self._write_data_to_hdf5(data)
+            except queue.Empty:
+                pass
+            except Exception as e:
+                self._log_error(e)
+
+            # 4. 記錄最終統計
             if self.env_file is not None:
-                try:
-                    final_counts = {
-                        'reward': self.storage_counts['reward'],
-                        'image': self.storage_counts['image']
-                    }
-                    self._log_info(f"環境數據最終統計: {final_counts}")
-                    
-                    if hasattr(self.env_file, 'id'):
-                        self.env_file.flush()
-                        self.env_file.close()
-                except Exception as e:
-                    self._log_error(e)
-            
+                final_counts = {
+                    'reward': self.storage_counts['reward'],
+                    'image': self.storage_counts['image']
+                }
+                self._log_info(f"環境數據最終統計: {final_counts}")
+
             if self.feature_file is not None:
-                try:
-                    final_feature_count = self.storage_counts['feature']
-                    self._log_info(f"特徵數據最終數量: {final_feature_count}")
-                    
-                    if hasattr(self.feature_file, 'id'):
-                        self.feature_file.flush()
-                        self.feature_file.close()
-                except Exception as e:
-                    self._log_error(e)
+                final_feature_count = self.storage_counts['feature']
+                self._log_info(f"特徵數據最終數量: {final_feature_count}")
+
+            # 5. 關閉並清理檔案
+            try:
+                if self.env_file is not None:
+                    self.env_file.close()
+            except:
+                pass
+            finally:
+                self.env_file = None
+
+            try:
+                if self.feature_file is not None:
+                    self.feature_file.close()
+            except:
+                pass
+            finally:
+                self.feature_file = None
             
             self.writer_thread = None
             self.stop_event.clear()
