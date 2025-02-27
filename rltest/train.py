@@ -243,7 +243,7 @@ def main(model_dir="E:/train_log0118/models"):
             model.policy.env = env
 
         # 初始化訓練回調
-        callback = EnhancedEpisodeCallback(train_logger=logger, model_dir=model_dir, save_freq=50)
+        callback = EnhancedEpisodeCallback(train_logger=logger, model_dir=model_dir, save_freq=1)
         
         # 設置總訓練步數
         total_timesteps = 10_000_000

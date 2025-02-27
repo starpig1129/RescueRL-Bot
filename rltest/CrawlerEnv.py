@@ -644,73 +644,119 @@ class CrawlerEnv(gym.Env):
         self.layer_outputs = outputs
 
     def close(self):
+        """關閉環境並釋放所有資源"""
         print("正在關閉環境...")
         
-        # 關閉非同步任務
-        if hasattr(self, 'tasks') and self.tasks:
-            for task in self.tasks:
-                if not task.done():
-                    task.cancel()
+        try:
+            # 儲存當前世代的訓練結果
+            if hasattr(self, 'epoch') and self.epoch > 0:
+                self._log_epoch_result()
+        except Exception as e:
+            print(f"儲存訓練結果時發生錯誤: {e}")
             
-            # 如果有事件循環，執行所有未完成的任務
+        try:
+            # 關閉非同步任務
+            if hasattr(self, 'tasks') and self.tasks:
+                for task in self.tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # 如果有事件循環，執行所有未完成的任務
+                if hasattr(self, 'loop') and self.loop and not self.loop.is_closed():
+                    try:
+                        # 等待所有任務完成或被取消
+                        pending = asyncio.all_tasks(self.loop)
+                        if pending:
+                            self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    except Exception as e:
+                        print(f"關閉非同步任務時發生錯誤: {e}")
+        except Exception as e:
+            print(f"清理非同步任務時發生錯誤: {e}")
+            
+        try:
+            # 關閉傳統線程
+            if hasattr(self, 'reset_thread_stop'):
+                self.reset_thread_stop.set()
+            
+            if hasattr(self, 'reset_thread') and self.reset_thread is not None:
+                self.reset_thread.join(timeout=1)
+        except Exception as e:
+            print(f"關閉重置線程時發生錯誤: {e}")
+            
+        try:
+            # 關閉所有連接和套接字
+            connections = [
+                ('control_conn', 'control_socket'),
+                ('info_conn', 'info_socket'),
+                ('obs_conn', 'obs_socket'),
+                ('reset_conn', 'reset_socket'),
+                ('top_camera_conn', 'top_camera_socket')
+            ]
+            
+            for conn_attr, socket_attr in connections:
+                # 關閉連接
+                if hasattr(self, conn_attr) and getattr(self, conn_attr) is not None:
+                    try:
+                        conn = getattr(self, conn_attr)
+                        conn.shutdown(socket.SHUT_RDWR)
+                        conn.close()
+                        print(f"{conn_attr} 已關閉")
+                    except Exception as e:
+                        print(f"關閉 {conn_attr} 時發生錯誤: {e}")
+                    finally:
+                        setattr(self, conn_attr, None)
+                
+                # 關閉套接字
+                if hasattr(self, socket_attr) and getattr(self, socket_attr) is not None:
+                    try:
+                        sock = getattr(self, socket_attr)
+                        sock.shutdown(socket.SHUT_RDWR)
+                        sock.close()
+                        print(f"{socket_attr} 已關閉")
+                    except Exception as e:
+                        print(f"關閉 {socket_attr} 時發生錯誤: {e}")
+                    finally:
+                        setattr(self, socket_attr, None)
+        except Exception as e:
+            print(f"關閉網路連接時發生錯誤: {e}")
+            
+        try:
+            # 關閉事件循環
             if hasattr(self, 'loop') and self.loop and not self.loop.is_closed():
                 try:
-                    # 等待所有任務完成或被取消
-                    pending = asyncio.all_tasks(self.loop)
-                    if pending:
-                        self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    self.loop.stop()
+                    self.loop.close()
+                    print("事件循環已關閉")
                 except Exception as e:
-                    print(f"關閉非同步任務時發生錯誤: {e}")
-        
-        # 關閉傳統線程
-        if hasattr(self, 'reset_thread_stop'):
-            self.reset_thread_stop.set()
-        
-        if hasattr(self, 'reset_thread') and self.reset_thread is not None:
-            self.reset_thread.join(timeout=1)
-        
-        # 關閉所有連接和套接字
-        connections = [
-            ('control_conn', 'control_socket'),
-            ('info_conn', 'info_socket'),
-            ('obs_conn', 'obs_socket'),
-            ('reset_conn', 'reset_socket'),
-            ('top_camera_conn', 'top_camera_socket')
-        ]
-        
-        for conn_attr, socket_attr in connections:
-            if hasattr(self, conn_attr) and getattr(self, conn_attr) is not None:
-                try:
-                    getattr(self, conn_attr).close()
-                    print(f"{conn_attr} 已關閉")
-                except Exception as e:
-                    print(f"關閉 {conn_attr} 時發生錯誤: {e}")
-                setattr(self, conn_attr, None)
+                    print(f"關閉事件循環時發生錯誤: {e}")
+                finally:
+                    self.loop = None
+        except Exception as e:
+            print(f"清理事件循環時發生錯誤: {e}")
             
-            if hasattr(self, socket_attr) and getattr(self, socket_attr) is not None:
+        try:
+            # 關閉資料處理器
+            if hasattr(self, 'data_handler'):
                 try:
-                    getattr(self, socket_attr).close()
-                    print(f"{socket_attr} 已關閉")
+                    self.data_handler.close_epoch_file()
+                    print("資料處理器已關閉")
                 except Exception as e:
-                    print(f"關閉 {socket_attr} 時發生錯誤: {e}")
-                setattr(self, socket_attr, None)
-        
-        # 關閉事件循環
-        if hasattr(self, 'loop') and self.loop and not self.loop.is_closed():
-            try:
-                self.loop.close()
-                print("事件循環已關閉")
-            except Exception as e:
-                print(f"關閉事件循環時發生錯誤: {e}")
-        
-        # 關閉資料處理器
-        if hasattr(self, 'data_handler'):
-            try:
-                self.data_handler.close_epoch_file()
-                print("資料處理器已關閉")
-            except Exception as e:
-                print(f"關閉資料處理器時發生錯誤: {e}")
-        
+                    print(f"關閉資料處理器時發生錯誤: {e}")
+                finally:
+                    self.data_handler = None
+            
+            # 關閉日誌系統
+            if hasattr(self, 'logger'):
+                try:
+                    self.logger.cleanup()
+                    print("日誌系統已關閉")
+                except Exception as e:
+                    print(f"關閉日誌系統時發生錯誤: {e}")
+                finally:
+                    self.logger = None
+        except Exception as e:
+            print(f"清理資源時發生錯誤: {e}")
+            
         print("環境關閉完成")
 
 def signal_handler(sig, frame):
