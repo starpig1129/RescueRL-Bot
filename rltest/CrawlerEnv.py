@@ -3,21 +3,17 @@ import numpy as np
 import cv2
 import torch
 import os
-os.environ['YOLO_VERBOSE'] = 'False'
-from ultralytics import YOLO
-import socket
-import struct
 import math
-import json
-import threading
 import signal
 import sys
 import time
-import asyncio
-from reward.Reward2 import RewardFunction  # 改用 Reward2
+os.environ['YOLO_VERBOSE'] = 'False'
+from ultralytics import YOLO
+from reward.Reward2 import RewardFunction
 from DataHandler import DataHandler
 from torchvision import transforms 
 from logger import TrainLog
+from server_manager import ServerManager
 
 # 影像標準化轉換
 normalize = transforms.Normalize(
@@ -76,9 +72,6 @@ class CrawlerEnv(gym.Env):
         self.reward_function = RewardFunction()
         self.layer_outputs = None
         
-        # Socket 伺服器相關變量初始化
-        self._init_socket_vars()
-        
         # 資料處理相關設置
         base_dir = "test_logs" if test_mode else "E:/train_log0118/train_log"
         self.logger = TrainLog()
@@ -94,236 +87,15 @@ class CrawlerEnv(gym.Env):
         
         if self.epoch == 0:
             self.data_handler.create_epoch_file(self.epoch)
-        
-        # 重置事件相關設置
-        self.reset_event = threading.Event()
-        self.reset_thread = None
-        self.reset_thread_stop = threading.Event()
 
+        # 初始化伺服器管理器
+        self.server_manager = ServerManager(logger=self.logger)
         try:
-            self.setup_all_servers()
+            self.server_manager.setup_all_servers()
+            self.server_manager.set_epoch(self.epoch)
         except Exception as e:
             self.close()
             raise Exception(f"設置伺服器時發生錯誤: {e}")
-
-    def _init_socket_vars(self):
-        self.control_socket = None
-        self.control_conn = None
-        self.info_socket = None
-        self.info_conn = None
-        self.obs_socket = None
-        self.obs_conn = None
-        self.reset_socket = None
-        self.reset_conn = None
-        self.top_camera_socket = None
-        self.top_camera_conn = None
-        
-        # 非同步相關變量
-        self.loop = None
-        self.tasks = []  # 存放所有非同步任務
-
-    def setup_all_servers(self):
-        # 創建或獲取事件循環
-        self.loop = asyncio.get_event_loop()
-        if self.loop.is_closed():
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-        self.setup_reset_server(),
-        # 使用run_until_complete運行所有伺服器設置任務
-        self.loop.run_until_complete(asyncio.gather(
-            self.setup_control_server(),
-            self.setup_info_server(),
-            self.setup_obs_server(),
-            self.setup_top_camera_server()
-        ))
-
-    async def setup_top_camera_server(self):
-        """設置頂部攝影機伺服器"""
-        self.top_camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.top_camera_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.top_camera_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.top_camera_address = ('localhost', 9000)
-        self.top_camera_socket.setblocking(False)
-        
-        try:
-            self.top_camera_socket.bind(self.top_camera_address)
-            self.top_camera_socket.listen(5)
-            print("頂部攝影機伺服器已啟動，等待連接...")
-            
-            # 使用非同步方式接受連接
-            conn, addr = await self.loop.sock_accept(self.top_camera_socket)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            # 將非阻塞socket轉換為阻塞模式進行後續操作
-            conn.setblocking(True)
-            
-            self.top_camera_conn = conn
-            self.top_camera_addr = addr
-            print("已連接到頂部攝影機:", addr)
-        except Exception as e:
-            raise Exception(f"頂部攝影機伺服器設置失敗: {e}")
-
-    def receive_top_camera_image(self):
-        """接收頂部攝影機的影像"""
-        try:
-            image_len_bytes = self.recv_all(self.top_camera_conn, 4)
-            if not image_len_bytes:
-                return None
-
-            image_len = int.from_bytes(image_len_bytes, byteorder='little')
-            image_data = self.recv_all(self.top_camera_conn, image_len)
-            if not image_data:
-                return None
-
-            nparr = np.frombuffer(image_data, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if self.show:
-                cv2.imshow("頂部視角", image)
-                cv2.waitKey(1)
-                
-            return image
-
-        except Exception as e:
-            print(f"接收頂部攝影機影像時發生錯誤: {e}")
-            self.top_camera_conn, self.top_camera_addr = self.reconnect_socket(
-                self.top_camera_socket,
-                self.top_camera_address,
-                '頂部攝影機'
-            )
-            return None
-
-    async def setup_control_server(self):
-        self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.control_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.control_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.control_address = ('localhost', 5000)
-        self.control_socket.setblocking(False)
-        
-        try:
-            self.control_socket.bind(self.control_address)
-            self.control_socket.listen(5)
-            print('控制伺服器已啟動，等待連接...')
-            
-            # 使用非同步方式接受連接
-            conn, addr = await self.loop.sock_accept(self.control_socket)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            # 將非阻塞socket轉換為阻塞模式進行後續操作
-            conn.setblocking(True)
-            
-            self.control_conn = conn
-            self.control_addr = addr
-            print("已連接到控制伺服器:", addr)
-        except Exception as e:
-            raise Exception(f"控制伺服器設置失敗: {e}")
-
-    async def setup_info_server(self):
-        self.info_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.info_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.info_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.info_address = ('localhost', 8000)
-        self.info_socket.setblocking(False)
-        
-        try:
-            self.info_socket.bind(self.info_address)
-            self.info_socket.listen(5)
-            print('資訊伺服器已啟動，等待連接...')
-            
-            # 使用非同步方式接受連接
-            conn, addr = await self.loop.sock_accept(self.info_socket)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            # 將非阻塞socket轉換為阻塞模式進行後續操作
-            conn.setblocking(True)
-            conn.settimeout(1)  # 降低超時時間以更快檢測連接問題
-            conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 64 * 1024)  # 設置接收緩衝區大小
-            
-            self.info_conn = conn
-            self.info_addr = addr
-            print("已連接到資訊伺服器:", addr)
-        except Exception as e:
-            raise Exception(f"資訊伺服器設置失敗: {e}")
-
-    async def setup_obs_server(self):
-        self.obs_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.obs_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.obs_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.obs_address = ('localhost', 6000)
-        self.obs_socket.setblocking(False)
-        
-        try:
-            self.obs_socket.bind(self.obs_address)
-            self.obs_socket.listen(5)
-            print("影像接收伺服器已啟動，等待連接...")
-            
-            # 使用非同步方式接受連接
-            conn, addr = await self.loop.sock_accept(self.obs_socket)
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            # 將非阻塞socket轉換為阻塞模式進行後續操作
-            conn.setblocking(True)
-            
-            self.obs_conn = conn
-            self.obs_addr = addr
-            print("已連接到影像接收伺服器:", addr)
-        except Exception as e:
-            raise Exception(f"影像接收伺服器設置失敗: {e}")
-
-    def setup_reset_server(self):
-        self.reset_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.reset_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.reset_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.reset_address = ('localhost', 7000)
-        
-        try:
-            self.reset_socket.bind(self.reset_address)
-            self.reset_socket.listen(5)
-            print("重置訊號伺服器已啟動，等待連接...")
-            self.reset_socket.settimeout(10)
-            
-            self.reset_event = threading.Event()
-            self.reset_thread_stop = threading.Event()
-            
-            self.reset_thread = threading.Thread(target=self.accept_reset_connections)
-            self.reset_thread.daemon = True
-            self.reset_thread.start()
-        except Exception as e:
-            raise Exception(f"重置伺服器設置失敗: {e}")
-
-    def accept_reset_connections(self):
-        while not self.reset_thread_stop.is_set():
-            try:
-                self.reset_socket.settimeout(1)
-                reset_conn, reset_addr = self.reset_socket.accept()
-                print("已連接到重置訊號發送端:", reset_addr)
-                
-                while not self.reset_thread_stop.is_set():
-                    try:
-                        signal_data = reset_conn.recv(4)
-                        if not signal_data:
-                            break
-                        signal = int.from_bytes(signal_data, byteorder='little')
-                        
-                        if signal == 1:
-                            epoch_data = self.epoch.to_bytes(4, byteorder='little')
-                            try:
-                                reset_conn.send(epoch_data)
-                                print(f"向 Unity 發送當前 epoch: {self.epoch}")
-                            except Exception as e:
-                                print(f"發送 epoch 到 Unity 時發生錯誤: {e}")
-                            
-                            self.reset_event.set()
-                            print(f"收到重置訊號，當前 epoch: {self.epoch}")
-                    except socket.timeout:
-                        continue
-                    except Exception as e:
-                        print(f"接收重置訊號時發生錯誤: {e}")
-                        break
-                        
-                reset_conn.close()
-            except socket.timeout:
-                continue
-            except Exception as e:
-                if not self.reset_thread_stop.is_set():
-                    print(f"重置連接發生錯誤: {e}")
-                continue
 
     def step(self, action):
         try:
@@ -337,25 +109,48 @@ class CrawlerEnv(gym.Env):
                 self.last_update_time = current_time
             self.fps_counter += 1
             
-            reward_data = self.receive_data()
+            # 接收獎勵資料
+            reward_data = self.server_manager.receive_info()
             if reward_data is None:
                 return None, 0, True, {}
             
+            # 發送控制信號
             relative_angle = self.relative_angles[action]
+            angle_rad = math.radians(relative_angle)
+            self.server_manager.send_control_signal(angle_rad)
             
-            # 發送相對角度到Unity
-            self.send_control_signal(relative_angle)
-            
-            results, obs, origin_image = self.receive_image()
+            # 接收和處理影像
+            obs, origin_image = self.server_manager.receive_image(show=self.show)
             if obs is None:
                 return None, 0, True, {}
+                
+            # YOLO檢測
+            results = self.YoloModel(
+                obs, 
+                imgsz=(640, 384), 
+                device='cuda:0',
+                conf=0.75, 
+                classes=[0],
+                show_boxes=False, 
+                show=False
+            )[0]
+
+            # 繪製檢測框
+            try:
+                x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
+                obs = cv2.rectangle(obs, (x1, y1), (x2, y2), (0, 255, 0), -1)
+            except Exception:
+                pass
+
+            results = results.cpu().numpy()
             
             # 接收頂部攝影機影像
-            top_view_image = self.receive_top_camera_image()
+            top_view_image = self.server_manager.receive_top_camera_image(show=self.show)
                 
+            # 計算獎勵
             reward, reward_list = self.reward_function.get_reward(
                 detection_results=results,
-                reward_data=reward_data,
+                reward_data=reward_data
             )
             
             # 檢查是否找到目標
@@ -371,6 +166,7 @@ class CrawlerEnv(gym.Env):
             
             self.last_reward_list = reward_list.copy() if reward_list is not None else None
             
+            # 儲存資料
             if self.should_save:
                 try:
                     self.data_handler.save_step_data(
@@ -389,7 +185,7 @@ class CrawlerEnv(gym.Env):
                         self.logger.log_error(e)
             
             processed_obs = self.preprocess_observation(obs)
-            self.done = self.reset_event.is_set()
+            self.done = self.server_manager.is_reset_triggered()
             
             return processed_obs, reward, self.done, {
                 'reward_list': reward_list,
@@ -402,6 +198,22 @@ class CrawlerEnv(gym.Env):
             if self.logger:
                 self.logger.log_error(e)
             return None, 0, True, {}
+
+    def preprocess_observation(self, obs):
+        """處理觀察空間的數據"""
+        obs = torch.from_numpy(obs).float() 
+        obs = obs / 255.0
+        obs = obs.permute(2, 0, 1)
+        obs = normalize(obs)
+        resize = transforms.Resize((224, 224))
+        obs = resize(obs)
+        return obs
+
+    def get_layer_outputs(self):
+        return self.layer_outputs
+
+    def set_layer_outputs(self, outputs):
+        self.layer_outputs = outputs
 
     def _log_epoch_result(self):
         """記錄世代結果"""
@@ -427,32 +239,28 @@ class CrawlerEnv(gym.Env):
             # 重置任務完成狀態
             self.found_target = False
             self.success_step = 0
-            self.start_time = time.time()  # 記錄世代開始時間
-            self.min_distance = float('inf')  # 重置最小距離
+            self.start_time = time.time()
+            self.min_distance = float('inf')
             
-            # 重置獎勵函數的狀態
+            # 重置獎勵函數
             self.reward_function.reset()
             
-            self.should_save = True  # 移除儲存間隔檢查，由DataHandler控制儲存頻率
+            self.should_save = True
+            
+            # 更新伺服器管理器的世代
+            self.server_manager.set_epoch(self.epoch)
             
             if self.should_save:
                 self.data_handler.create_epoch_file(self.epoch)
                 if self.logger:
                     self.logger.log_info(f"將儲存第 {self.epoch} 個世代的資料")
-            else:
-                if self.logger:
-                    self.logger.log_info(f"跳過第 {self.epoch} 個世代的資料儲存")
-
-            # 處理非同步事件和傳統事件
-            if isinstance(self.reset_event, threading.Event):
-                self.reset_event.wait()
-                self.reset_event.clear()
-            elif isinstance(self.reset_event, asyncio.Event):
-                # 在同步環境中等待非同步事件
-                fut = asyncio.run_coroutine_threadsafe(self._wait_for_reset_event(), self.loop)
-                fut.result()  # 等待非同步事件完成
             
-            results, obs, origin_image = self.receive_image()
+            # 等待重置信號
+            if self.server_manager.is_reset_triggered():
+                self.server_manager.clear_reset_event()
+            
+            # 接收初始觀察
+            obs, origin_image = self.server_manager.receive_image(show=self.show)
             if self.logger:
                 self.logger.log_info("環境重置完成")
             
@@ -462,186 +270,6 @@ class CrawlerEnv(gym.Env):
             if self.logger:
                 self.logger.log_error(e)
             return None
-    
-    async def _wait_for_reset_event(self):
-        """等待非同步重置事件"""
-        await self.reset_event.wait()
-        self.reset_event.clear()
-
-    def preprocess_observation(self, obs):
-        obs = torch.from_numpy(obs).float() 
-        obs = obs / 255.0
-        obs = obs.permute(2, 0, 1)
-        obs = normalize(obs)
-        resize = transforms.Resize((224, 224))
-        obs = resize(obs)
-        return obs
-
-    def send_control_signal(self, relative_angle):
-        """
-        向 Unity 發送控制訊號
-        只發送相對角度，讓Unity端計算實際位置
-        
-        參數:
-            relative_angle: 相對角度 (-45°, 0°, 45°)
-        """
-        try:
-            # 將角度轉換為弧度並打包
-            angle_rad = math.radians(relative_angle)
-            buffer = struct.pack('f', angle_rad)
-            self.control_conn.sendall(buffer)
-
-        except Exception as e:
-            print(f"發送控制訊號時發生錯誤: {e}")
-            self.control_conn.close()
-            self.control_conn, self.control_addr = self.reconnect_socket(
-                self.control_socket, 
-                self.control_address, 
-                '控制'
-            )
-            print("重新連接到控制伺服器:", self.control_addr)
-
-    def receive_image(self):
-        try:
-            image_len_bytes = self.recv_all(self.obs_conn, 4)
-            if not image_len_bytes:
-                return None, None, None
-            image_len = int.from_bytes(image_len_bytes, byteorder='little')
-
-            image_data = self.recv_all(self.obs_conn, image_len)
-            if not image_data:
-                return None, None, None
-
-            nparr = np.frombuffer(image_data, np.uint8)
-            origin_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            obs = origin_image.copy()
-            
-            if obs is not None:
-                results = self.YoloModel(
-                    obs, 
-                    imgsz=(640, 384), 
-                    device='cuda:0',
-                    conf=0.75, 
-                    classes=[0],
-                    show_boxes=False, 
-                    show=False
-                )[0]
-
-                try:
-                    x1, y1, x2, y2 = map(int, results.boxes.xyxy[0][:4])
-                    obs = cv2.rectangle(obs, (x1, y1), (x2, y2), (0, 255, 0), -1)
-                except Exception:
-                    pass
-
-                if self.show:
-                    cv2.imshow("觀察空間", obs)
-                    cv2.waitKey(1)
-
-                results = results.cpu().numpy()
-                return results, obs, origin_image
-            
-            return None, None, None
-
-        except Exception as e:
-            print(f"接收影像資料時發生錯誤: {e}")
-            self.obs_conn, self.obs_addr = self.reconnect_socket(
-                self.obs_socket, 
-                self.obs_address, 
-                '影像接收'
-            )
-            return None, None, None
-
-    def receive_data(self):
-        max_retries = 3
-        retry_delay = 0.01  # 10ms 延遲
-        
-        for retry_count in range(max_retries):
-            try:
-                length_bytes = self.recv_all(self.info_conn, 4)
-                if not length_bytes:
-                    if retry_count < max_retries - 1:
-                        print(f"未接收到資料長度 (重試 {retry_count + 1}/{max_retries})")
-                        time.sleep(retry_delay)
-                        continue
-                    return None
-
-                length = int.from_bytes(length_bytes, byteorder='big', signed=True)
-                
-                if length <= 0 or length > 10**6:
-                    print(f"接收到無效的資料長度: {length}")
-                    if retry_count < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    return None
-
-                data_bytes = self.recv_all(self.info_conn, length)
-                if not data_bytes:
-                    if retry_count < max_retries - 1:
-                        print(f"未接收到完整資料 (重試 {retry_count + 1}/{max_retries})")
-                        time.sleep(retry_delay)
-                        continue
-                    return None
-                
-                try:
-                    data_str = data_bytes.decode('utf-8')
-                    return json.loads(data_str)
-                except json.JSONDecodeError as e:
-                    print(f"JSON 解析失敗: {e}")
-                    if retry_count < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    return None
-
-            except socket.timeout:
-                if retry_count < max_retries - 1:
-                    print(f"接收資料超時 (重試 {retry_count + 1}/{max_retries})")
-                    time.sleep(retry_delay)
-                    continue
-                return None
-            except ConnectionResetError:
-                print("連接被重置，嘗試重新連接...")
-                self.info_conn, self.info_addr = self.reconnect_socket(
-                    self.info_socket,
-                    self.info_address,
-                    '資訊'
-                )
-                if retry_count < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                return None
-            except Exception as e:
-                print(f"接收資料時發生錯誤: {e}")
-                if retry_count < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                return None
-        
-        return None  # 如果所有重試都失敗，返回None
-
-    def reconnect_socket(self, socket_obj, address, conn_type):
-        try:
-            new_conn, new_addr = socket_obj.accept()
-            new_conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            print(f"重新連接到{conn_type}伺服器:", new_addr)
-            return new_conn, new_addr
-        except Exception as e:
-            print(f"重新連接{conn_type}伺服器時發生錯誤: {e}")
-            return None, None
-
-    def recv_all(self, conn, length):
-        data = bytearray()
-        while len(data) < length:
-            packet = conn.recv(length - len(data))
-            if not packet:
-                return None
-            data.extend(packet)
-        return data
-
-    def get_layer_outputs(self):
-        return self.layer_outputs
-
-    def set_layer_outputs(self, outputs):
-        self.layer_outputs = outputs
 
     def close(self):
         """關閉環境並釋放所有資源"""
@@ -653,110 +281,31 @@ class CrawlerEnv(gym.Env):
                 self._log_epoch_result()
         except Exception as e:
             print(f"儲存訓練結果時發生錯誤: {e}")
+
+        # 關閉伺服器管理器
+        if hasattr(self, 'server_manager'):
+            self.server_manager.close()
             
-        try:
-            # 關閉非同步任務
-            if hasattr(self, 'tasks') and self.tasks:
-                for task in self.tasks:
-                    if not task.done():
-                        task.cancel()
+        # 關閉資料處理器
+        if hasattr(self, 'data_handler'):
+            try:
+                self.data_handler.close_epoch_file()
+                print("資料處理器已關閉")
+            except Exception as e:
+                print(f"關閉資料處理器時發生錯誤: {e}")
+            finally:
+                self.data_handler = None
+        
+        # 關閉日誌系統
+        if hasattr(self, 'logger'):
+            try:
+                self.logger.cleanup()
+                print("日誌系統已關閉")
+            except Exception as e:
+                print(f"關閉日誌系統時發生錯誤: {e}")
+            finally:
+                self.logger = None
                 
-                # 如果有事件循環，執行所有未完成的任務
-                if hasattr(self, 'loop') and self.loop and not self.loop.is_closed():
-                    try:
-                        # 等待所有任務完成或被取消
-                        pending = asyncio.all_tasks(self.loop)
-                        if pending:
-                            self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                    except Exception as e:
-                        print(f"關閉非同步任務時發生錯誤: {e}")
-        except Exception as e:
-            print(f"清理非同步任務時發生錯誤: {e}")
-            
-        try:
-            # 關閉傳統線程
-            if hasattr(self, 'reset_thread_stop'):
-                self.reset_thread_stop.set()
-            
-            if hasattr(self, 'reset_thread') and self.reset_thread is not None:
-                self.reset_thread.join(timeout=1)
-        except Exception as e:
-            print(f"關閉重置線程時發生錯誤: {e}")
-            
-        try:
-            # 關閉所有連接和套接字
-            connections = [
-                ('control_conn', 'control_socket'),
-                ('info_conn', 'info_socket'),
-                ('obs_conn', 'obs_socket'),
-                ('reset_conn', 'reset_socket'),
-                ('top_camera_conn', 'top_camera_socket')
-            ]
-            
-            for conn_attr, socket_attr in connections:
-                # 關閉連接
-                if hasattr(self, conn_attr) and getattr(self, conn_attr) is not None:
-                    try:
-                        conn = getattr(self, conn_attr)
-                        conn.shutdown(socket.SHUT_RDWR)
-                        conn.close()
-                        print(f"{conn_attr} 已關閉")
-                    except Exception as e:
-                        print(f"關閉 {conn_attr} 時發生錯誤: {e}")
-                    finally:
-                        setattr(self, conn_attr, None)
-                
-                # 關閉套接字
-                if hasattr(self, socket_attr) and getattr(self, socket_attr) is not None:
-                    try:
-                        sock = getattr(self, socket_attr)
-                        sock.shutdown(socket.SHUT_RDWR)
-                        sock.close()
-                        print(f"{socket_attr} 已關閉")
-                    except Exception as e:
-                        print(f"關閉 {socket_attr} 時發生錯誤: {e}")
-                    finally:
-                        setattr(self, socket_attr, None)
-        except Exception as e:
-            print(f"關閉網路連接時發生錯誤: {e}")
-            
-        try:
-            # 關閉事件循環
-            if hasattr(self, 'loop') and self.loop and not self.loop.is_closed():
-                try:
-                    self.loop.stop()
-                    self.loop.close()
-                    print("事件循環已關閉")
-                except Exception as e:
-                    print(f"關閉事件循環時發生錯誤: {e}")
-                finally:
-                    self.loop = None
-        except Exception as e:
-            print(f"清理事件循環時發生錯誤: {e}")
-            
-        try:
-            # 關閉資料處理器
-            if hasattr(self, 'data_handler'):
-                try:
-                    self.data_handler.close_epoch_file()
-                    print("資料處理器已關閉")
-                except Exception as e:
-                    print(f"關閉資料處理器時發生錯誤: {e}")
-                finally:
-                    self.data_handler = None
-            
-            # 關閉日誌系統
-            if hasattr(self, 'logger'):
-                try:
-                    self.logger.cleanup()
-                    print("日誌系統已關閉")
-                except Exception as e:
-                    print(f"關閉日誌系統時發生錯誤: {e}")
-                finally:
-                    self.logger = None
-        except Exception as e:
-            print(f"清理資源時發生錯誤: {e}")
-            
         print("環境關閉完成")
 
 def signal_handler(sig, frame):
