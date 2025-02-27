@@ -16,14 +16,26 @@ class TrainLog:
             # 添加鎖以確保執行緒安全
             self.stats_lock = Lock()
             
+            # 獲取當前腳本的目錄作為基礎路徑
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            
             # 日誌檔案路徑
-            self.log_base_path = "logs"
+            self.log_base_path = os.path.join(script_dir, "logs")
             self.error_log_path = os.path.join(self.log_base_path, "errors")
             self.info_log_path = os.path.join(self.log_base_path, "info")
             
+            print(f"初始化日誌路徑:")
+            print(f"基礎路徑: {os.path.abspath(self.log_base_path)}")
+            print(f"錯誤日誌: {os.path.abspath(self.error_log_path)}")
+            print(f"資訊日誌: {os.path.abspath(self.info_log_path)}")
+            
             # 建立日誌目錄
+            print(f"正在創建日誌目錄...")
+            print(f"錯誤日誌路徑: {os.path.abspath(self.error_log_path)}")
+            print(f"資訊日誌路徑: {os.path.abspath(self.info_log_path)}")
             os.makedirs(self.error_log_path, exist_ok=True)
             os.makedirs(self.info_log_path, exist_ok=True)
+            print("日誌目錄創建完成")
             
             # 初始化統計相關變數
             self._init_stats()
@@ -78,29 +90,29 @@ class TrainLog:
 
     def _safe_file_write(self, filepath: str, content: str) -> bool:
         """安全地寫入文件"""
+        abs_path = os.path.abspath(filepath)
         try:
             # 確保目錄存在
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            dirpath = os.path.dirname(abs_path)
+            os.makedirs(dirpath, exist_ok=True)
             
-            # 使用臨時文件寫入
-            temp_path = filepath + '.tmp'
-            with open(temp_path, 'w', encoding='utf-8') as f:
+            # 如果檔案不存在，先創建檔案
+            if not os.path.exists(abs_path):
+                with open(abs_path, 'w', encoding='utf-8') as _:
+                    pass
+                
+            print(f"正在寫入檔案: {abs_path}")
+            with open(abs_path, 'a', encoding='utf-8') as f:
                 f.write(content)
                 f.flush()
                 os.fsync(f.fileno())
-            
-            # 原子性地重命名臨時文件
-            os.replace(temp_path, filepath)
-            return True
+                print(f"寫入完成，內容: {content.strip()}")
+                
+            return os.path.exists(abs_path)
             
         except Exception as e:
-            print(f"寫入文件 {filepath} 時發生錯誤: {e}")
-            # 清理臨時文件
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
+            print(f"寫入檔案時發生錯誤: {e}")
+            print(f"檔案路徑: {abs_path}")
             return False
 
     def log_info(self, message: str) -> None:
@@ -110,13 +122,18 @@ class TrainLog:
             log_message = f"{timestamp} - INFO: {message}\n"
             
             # 打印到控制台
-            print(log_message.rstrip())
+            print(f"準備記錄資訊: {log_message.rstrip()}")
             
             # 記錄到檔案
             current_date = datetime.now().strftime("%Y%m%d")
             log_file = os.path.join(self.info_log_path, f"info_{current_date}.log")
+            print(f"日誌檔案路徑: {os.path.abspath(log_file)}")
             
-            self._safe_file_write(log_file, log_message)
+            # 寫入並確認
+            if self._safe_file_write(log_file, log_message):
+                print("資訊已成功記錄到檔案")
+            else:
+                print("資訊記錄失敗")
                 
         except Exception as e:
             print(f"記錄資訊時發生錯誤: {e}")
@@ -351,6 +368,7 @@ class TrainLog:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             current_date = datetime.now().strftime("%Y%m%d")
             error_file = os.path.join(self.error_log_path, f"error_{current_date}.log")
+            print(f"\n準備寫入錯誤日誌: {os.path.abspath(error_file)}")
             
             error_message = f"\n時間: {timestamp}\n"
             error_message += f"錯誤: {str(error)}\n"
@@ -363,12 +381,16 @@ class TrainLog:
             error_message += "-" * 80 + "\n"
             
             # 寫入錯誤日誌
-            self._safe_file_write(error_file, error_message)
+            write_success = self._safe_file_write(error_file, error_message)
             
             # 在控制台顯示錯誤訊息
             sys.stderr.write(f"\n{Fore.RED}發生錯誤！{Style.RESET_ALL}\n")
-            sys.stderr.write(f"詳細資訊已儲存至: {error_file}\n")
-            sys.stderr.write(f"錯誤訊息: {str(error)}\n\n")
+            if write_success:
+                sys.stderr.write(f"錯誤日誌已寫入: {error_file}\n")
+            else:
+                sys.stderr.write(f"錯誤日誌寫入失敗!\n")
+            sys.stderr.write(f"錯誤訊息: {str(error)}\n")
+            sys.stderr.write(f"完整錯誤內容:\n{error_message}\n")
             sys.stderr.flush()
             
         except Exception as e:
