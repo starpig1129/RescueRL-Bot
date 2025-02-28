@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System;
+using System.Threading.Tasks;
 [RequireComponent(typeof(JointDriveController))] // 要求設置關節驅動力
 public class CrawlerAgent : Agent
 {
@@ -112,6 +113,9 @@ public class CrawlerAgent : Agent
         m_JdController.SetupBodyPart(leg3Upper);
         m_JdController.SetupBodyPart(leg3Lower);
 
+        // 確保CommunicationManager實例存在
+        var manager = CommunicationManager.Instance;
+
         resetSignal = BitConverter.GetBytes(1);
     }
     private void CheckUpsideDown()
@@ -153,61 +157,67 @@ public class CrawlerAgent : Agent
             isCountingForReset = false;
         }
     }
-    private void SendResetSignal()
+    private async void SendResetSignal()
+{
+    Debug.Log($"開始發送重置訊號");
+
+    try
     {
-        int attempts = 0;
-        bool signalSent = false;
+        // 使用Instance屬性獲取CommunicationManager實例
+        CommunicationManager manager = CommunicationManager.Instance;
 
-        while (!signalSent && attempts < MAX_RETRY_ATTEMPTS)
+        // 檢查連接狀態
+        if (!manager.IsResetConnected)
         {
-            try
+            Debug.LogWarning("重置連接未建立，嘗試初始化連接...");
+            await manager.InitializeAllConnections();
+
+            // 再次檢查連接狀態
+            if (!manager.IsResetConnected)
             {
-                using (Socket resetSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
-                {
-                    resetSocket.Connect(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 7000));
-
-                    // 發送重置信號
-                    resetSocket.Send(resetSignal);
-
-                    // 等待接收Python端的epoch
-                    byte[] epochBuffer = new byte[4];
-                    int bytesRead = resetSocket.Receive(epochBuffer);
-
-                    if (bytesRead == 4)
-                    {
-                        int pythonEpoch = BitConverter.ToInt32(epochBuffer, 0);
-
-                        // 更新Unity端的epoch以匹配Python
-                        if (currentEpoch != pythonEpoch)
-                        {
-                            Debug.Log($"同步Unity epoch從 {currentEpoch} 到 Python epoch {pythonEpoch}");
-                            currentEpoch = pythonEpoch;
-                        }
-
-                        signalSent = true;
-                        Debug.Log($"Reset signal sent and received Python epoch: {currentEpoch}");
-                    }
-                    else
-                    {
-                        Debug.LogWarning("未收到完整的epoch數據");
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                attempts++;
-                if (attempts >= MAX_RETRY_ATTEMPTS)
-                {
-                    Debug.LogError($"Failed to send reset signal after {MAX_RETRY_ATTEMPTS} attempts: {e.Message}");
-                }
-                else
-                {
-                    Debug.LogWarning($"Retry {attempts} to send reset signal: {e.Message}");
-                    System.Threading.Thread.Sleep(RETRY_DELAY_MS);
-                }
+                Debug.LogError("無法建立重置連接");
+                return;
             }
         }
+
+        // 使用重試機制發送重置信號
+        int maxRetries = 3;
+        int retryCount = 0;
+        int pythonEpoch = -1;
+
+        while (pythonEpoch < 0 && retryCount < maxRetries)
+        {
+            if (retryCount > 0)
+            {
+                Debug.LogWarning($"重試發送重置信號 (嘗試 {retryCount}/{maxRetries})");
+                await Task.Delay(500); // 延遲500毫秒再重試
+            }
+
+            pythonEpoch = await manager.SendResetSignalAsync();
+            retryCount++;
+        }
+
+        if (pythonEpoch >= 0)
+        {
+            // 更新Unity端的epoch以匹配Python
+            if (currentEpoch != pythonEpoch)
+            {
+                Debug.Log($"同步Unity epoch從 {currentEpoch} 到 Python epoch {pythonEpoch}");
+                currentEpoch = pythonEpoch;
+            }
+
+            Debug.Log($"重置信號發送成功，收到Python epoch: {currentEpoch}");
+        }
+        else
+        {
+            Debug.LogError("發送重置信號失敗，已達最大重試次數");
+        }
     }
+    catch (Exception e)
+    {
+        Debug.LogError($"發送重置信號時發生錯誤: {e.Message}");
+    }
+}
     /// <summary>
     /// 在指定位置生成一個目標預製件
     /// </summary>

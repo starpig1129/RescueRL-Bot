@@ -1,7 +1,6 @@
 using UnityEngine;
-using System.Net.Sockets;
 using System;
-using System.Threading;
+using System.Threading.Tasks;
 
 namespace Unity.MLAgentsExamples
 {
@@ -14,45 +13,66 @@ namespace Unity.MLAgentsExamples
         public float magnitude = 2.0f;  // 指示器與Crawler的距離
 
         private float m_StartingYPos;
-        private TcpClient tcpClient;
-        private NetworkStream stream;
-        private Thread tcpThread;
-
+        private bool isRunning = true;
         private float relativeAngle = 0f;  // 相對角度
         private bool dataReceived;
+        private object lockObject = new object();
+        private float receiveInterval = 0.01f;
 
         void Start()
         {
-            // 連接到 Python 伺服器
-            tcpClient = new TcpClient("localhost", 5000);
-            stream = tcpClient.GetStream();
-            tcpThread = new Thread(new ThreadStart(ReadData));
-            tcpThread.IsBackground = true;
-            tcpThread.Start();
-
             // 初始化起始位置
             m_StartingYPos = transform.position.y;
+
+            // 確保CommunicationManager實例存在
+            var manager = CommunicationManager.Instance;
+
+            // 開始接收數據的協程
+            StartCoroutine(ReceiveDataRoutine());
         }
 
-        void ReadData()
+        private System.Collections.IEnumerator ReceiveDataRoutine()
+        {
+            while (isRunning)
+            {
+                yield return new WaitForSeconds(receiveInterval);
+
+                Debug.Log($"開始接收控制訊號");
+
+                // 使用通信管理器接收數據
+                ReceiveControlSignalAsync().ContinueWith(task => {
+                    if (task.Exception != null)
+                    {
+                        Debug.LogError($"接收控制信號時發生錯誤: {task.Exception.Message}");
+                    }
+                });
+            }
+        }
+
+        private async Task ReceiveControlSignalAsync()
         {
             try
             {
-                while (tcpClient.Connected)
+                // 使用通信管理器接收數據
+                byte[] data = await CommunicationManager.Instance.ReceiveDataAsync(
+                    CommunicationManager.Instance.ControlStream,
+                    CommunicationManager.Instance.ControlLock,
+                    CommunicationManager.Instance.IsControlConnected
+                );
+
+                if (data != null && data.Length == 4)
                 {
-                    byte[] buffer = new byte[4];  // 只接收一個float (相對角度)
-                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead == 4)
+                    lock (lockObject)
                     {
-                        // 接收從Python發送的相對角度(弧度)
-                        relativeAngle = BitConverter.ToSingle(buffer, 0) * Mathf.Rad2Deg;
+                        relativeAngle = BitConverter.ToSingle(data, 0) * Mathf.Rad2Deg;
                         dataReceived = true;
                     }
+                    Debug.Log($"控制訊號成功");
                 }
             }
             catch (Exception e)
             {
-                Debug.LogError("TCP Read Error: " + e.Message);
+                Debug.LogError($"接收控制信號時發生錯誤: {e.Message}");
             }
         }
 
@@ -108,12 +128,7 @@ namespace Unity.MLAgentsExamples
 
         void OnDisable()
         {
-            // 關閉TCP連接
-            if (tcpThread != null && tcpThread.IsAlive)
-                tcpThread.Abort();
-
-            stream?.Close();
-            tcpClient?.Close();
+            isRunning = false;
         }
 
         public void MatchOrientation(Transform t)

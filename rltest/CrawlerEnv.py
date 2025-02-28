@@ -25,6 +25,11 @@ class CrawlerEnv(gym.Env):
     def __init__(self, show, epoch=0, test_mode=False, feature_save_interval=100, image_save_interval=50, reward_save_interval=1):
         super(CrawlerEnv, self).__init__()
         
+        # 步驟記錄相關
+        self.steps_log_file = 'E:/train_log0118/debug_steps.txt'
+        self.should_log_steps = False
+        self.current_steps = []
+        
         # 基本設置
         self.show = show
         self.test_mode = test_mode
@@ -100,6 +105,15 @@ class CrawlerEnv(gym.Env):
     def step(self, action):
         try:
             self.step_count += 1
+            step_log = []
+            
+            # 檢查是否需要記錄
+            epoch_mod = self.epoch % 16
+            self.should_log_steps = epoch_mod in [15, 0, 1]
+            
+            if self.should_log_steps:
+                step_log.append(f"=== 世代 {self.epoch} 步驟 {self.step_count} ===")
+                step_log.append(f"開始時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
             
             current_time = time.time()
             dt = current_time - self.last_update_time
@@ -110,18 +124,81 @@ class CrawlerEnv(gym.Env):
             self.fps_counter += 1
             
             # 接收獎勵資料
-            reward_data = self.server_manager.receive_info()
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    start_time = time.time()
+                    reward_data = self.server_manager.receive_info()
+                    if self.should_log_steps:
+                        step_log.append(f"receive_info: 成功 ({(time.time() - start_time):.3f}秒)")
+                    if reward_data is not None:
+                        break
+                    if retry < max_retries - 1:
+                        if self.should_log_steps:
+                            step_log.append(f"receive_info: 重試 {retry + 1}/{max_retries}")
+                        time.sleep(0.1)  # 短暫等待後重試
+                        continue
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        if self.should_log_steps:
+                            step_log.append(f"receive_info: 錯誤重試 {retry + 1}/{max_retries} - {str(e)}")
+                        time.sleep(0.1)
+                        continue
+                    if self.should_log_steps:
+                        step_log.append(f"receive_info: 錯誤 - {str(e)}")
+                        self._save_step_log(step_log)
+                    return None, 0, True, {}
+            
             if reward_data is None:
+                if self.should_log_steps:
+                    step_log.append("receive_info: 重試後仍然失敗，提前結束")
+                    self._save_step_log(step_log)
                 return None, 0, True, {}
             
             # 發送控制信號
-            relative_angle = self.relative_angles[action]
-            angle_rad = math.radians(relative_angle)
-            self.server_manager.send_control_signal(angle_rad)
+            try:
+                start_time = time.time()
+                relative_angle = self.relative_angles[action]
+                angle_rad = math.radians(relative_angle)
+                self.server_manager.send_control_signal(angle_rad)
+                if self.should_log_steps:
+                    step_log.append(f"send_control_signal: 成功 ({(time.time() - start_time):.3f}秒)")
+            except Exception as e:
+                if self.should_log_steps:
+                    step_log.append(f"send_control_signal: 錯誤 - {str(e)}")
+                    self._save_step_log(step_log)
+                return None, 0, True, {}
             
             # 接收和處理影像
-            obs, origin_image = self.server_manager.receive_image(show=self.show)
-            if obs is None:
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    start_time = time.time()
+                    obs, origin_image = self.server_manager.receive_image(show=self.show)
+                    if self.should_log_steps:
+                        step_log.append(f"receive_image: 成功 ({(time.time() - start_time):.3f}秒)")
+                    if obs is not None and origin_image is not None:
+                        break
+                    if retry < max_retries - 1:
+                        if self.should_log_steps:
+                            step_log.append(f"receive_image: 重試 {retry + 1}/{max_retries}")
+                        time.sleep(0.1)
+                        continue
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        if self.should_log_steps:
+                            step_log.append(f"receive_image: 錯誤重試 {retry + 1}/{max_retries} - {str(e)}")
+                        time.sleep(0.1)
+                        continue
+                    if self.should_log_steps:
+                        step_log.append(f"receive_image: 錯誤 - {str(e)}")
+                        self._save_step_log(step_log)
+                    return None, 0, True, {}
+            
+            if obs is None or origin_image is None:
+                if self.should_log_steps:
+                    step_log.append("receive_image: 重試後仍然失敗，提前結束")
+                    self._save_step_log(step_log)
                 return None, 0, True, {}
                 
             # YOLO檢測
@@ -145,13 +222,51 @@ class CrawlerEnv(gym.Env):
             results = results.cpu().numpy()
             
             # 接收頂部攝影機影像
-            top_view_image = self.server_manager.receive_top_camera_image(show=self.show)
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    start_time = time.time()
+                    top_view_image = self.server_manager.receive_top_camera_image(show=self.show)
+                    if self.should_log_steps:
+                        step_log.append(f"receive_top_camera_image: 成功 ({(time.time() - start_time):.3f}秒)")
+                    if top_view_image is not None:
+                        break
+                    if retry < max_retries - 1:
+                        if self.should_log_steps:
+                            step_log.append(f"receive_top_camera_image: 重試 {retry + 1}/{max_retries}")
+                        time.sleep(0.1)
+                        continue
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        if self.should_log_steps:
+                            step_log.append(f"receive_top_camera_image: 錯誤重試 {retry + 1}/{max_retries} - {str(e)}")
+                        time.sleep(0.1)
+                        continue
+                    if self.should_log_steps:
+                        step_log.append(f"receive_top_camera_image: 錯誤 - {str(e)}")
+                        self._save_step_log(step_log)
+                    return None, 0, True, {}
+            
+            if top_view_image is None:
+                if self.should_log_steps:
+                    step_log.append("receive_top_camera_image: 重試後仍然失敗，提前結束")
+                    self._save_step_log(step_log)
+                return None, 0, True, {}
                 
             # 計算獎勵
-            reward, reward_list = self.reward_function.get_reward(
-                detection_results=results,
-                reward_data=reward_data
-            )
+            try:
+                start_time = time.time()
+                reward, reward_list = self.reward_function.get_reward(
+                    detection_results=results,
+                    reward_data=reward_data
+                )
+                if self.should_log_steps:
+                    step_log.append(f"get_reward: 成功 ({(time.time() - start_time):.3f}秒)")
+            except Exception as e:
+                if self.should_log_steps:
+                    step_log.append(f"get_reward: 錯誤 - {str(e)}")
+                    self._save_step_log(step_log)
+                return None, 0, True, {}
             
             # 檢查是否找到目標
             if reward_list[10] > 0:
@@ -184,8 +299,34 @@ class CrawlerEnv(gym.Env):
                     if self.logger:
                         self.logger.log_error(e)
             
-            processed_obs = self.preprocess_observation(obs)
-            self.done = self.server_manager.is_reset_triggered()
+            # 預處理觀察
+            try:
+                start_time = time.time()
+                processed_obs = self.preprocess_observation(obs)
+                if self.should_log_steps:
+                    step_log.append(f"preprocess_observation: 成功 ({(time.time() - start_time):.3f}秒)")
+            except Exception as e:
+                if self.should_log_steps:
+                    step_log.append(f"preprocess_observation: 錯誤 - {str(e)}")
+                    self._save_step_log(step_log)
+                return None, 0, True, {}
+            
+            # 檢查是否需要重置
+            try:
+                start_time = time.time()
+                self.done = self.server_manager.is_reset_triggered()
+                if self.should_log_steps:
+                    step_log.append(f"is_reset_triggered: 成功 ({(time.time() - start_time):.3f}秒)")
+            except Exception as e:
+                if self.should_log_steps:
+                    step_log.append(f"is_reset_triggered: 錯誤 - {str(e)}")
+                    self._save_step_log(step_log)
+                return None, 0, True, {}
+            
+            # 如果需要記錄，保存這個步驟的日誌
+            if self.should_log_steps:
+                step_log.append(f"結束時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                self._save_step_log(step_log)
             
             return processed_obs, reward, self.done, {
                 'reward_list': reward_list,
@@ -271,6 +412,11 @@ class CrawlerEnv(gym.Env):
                 self.logger.log_error(e)
             return None
 
+    def _save_step_log(self, log_lines):
+        """保存步驟日誌"""
+        with open(self.steps_log_file, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(log_lines) + '\n\n')
+    
     def close(self):
         """關閉環境並釋放所有資源"""
         print("正在關閉環境...")
