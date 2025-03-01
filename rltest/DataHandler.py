@@ -9,11 +9,12 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 
 class DataHandler:
-    def __init__(self, base_dir: str = "train_logs", feature_save_interval: int = 10, 
-                 image_save_interval: int = 5, reward_save_interval: int = 1, logger=None):
+    def __init__(self, base_dir: str = "train_logs", feature_save_interval: int = 5, 
+                 image_save_interval: int = 1, reward_save_interval: int = 1, logger=None):
         self.base_dir = base_dir
         self.feature_save_interval = feature_save_interval
         self.image_save_interval = image_save_interval
+        # 設置為1以確保每一步都有圖像
         self.reward_save_interval = reward_save_interval
         self.logger = logger
         
@@ -252,12 +253,20 @@ class DataHandler:
             self._log_error(e)
             raise
 
-    def save_step_data(self, step: int, obs: np.ndarray, angle_degrees: float,
+    def save_step_data(self, step: int, current_epoch: int, obs: np.ndarray, angle_degrees: float,
                       reward: float, reward_list: List[float], origin_image: np.ndarray,
                       results: Any, layer_outputs: Dict[str, np.ndarray],
                       top_view_image: Optional[np.ndarray] = None) -> None:
         """保存一個步驟的數據"""
         try:
+            # 驗證基本參數
+            if current_epoch < 0:
+                self._log_error(Exception(f"無效的世代編號: {current_epoch}"))
+                return
+
+            if step < 0:
+                self._log_error(Exception(f"無效的步驟編號: {step}"))
+                return
             # 準備環境數據
             env_data = {
                 'angle_degrees': angle_degrees,
@@ -268,11 +277,16 @@ class DataHandler:
                 'results': results
             }
             
-            # 判斷各種數據類型是否需要保存
-            should_save_rewards = (step % self.reward_save_interval) == 0
-            should_save_images = (step % self.image_save_interval) == 0
-            should_save_features = (step % self.feature_save_interval) == 0
-            
+            # 驗證基本數據
+            if origin_image is None or reward is None:
+                self._log_error(Exception(f"步數 {step} 缺少必要數據"))
+                return
+
+            # 根據世代判斷是否需要保存
+            should_save_rewards = (current_epoch % self.reward_save_interval) == 0
+            should_save_images = (current_epoch % self.image_save_interval) == 0
+            should_save_features = (step % self.feature_save_interval) == 0 and layer_outputs is not None
+
             data = {
                 'step': step,
                 'env_data': env_data,
@@ -281,33 +295,59 @@ class DataHandler:
                 'should_save_images': should_save_images,
                 'should_save_features': should_save_features
             }
-            
+
+            # 基本驗證
+            if should_save_images and (origin_image is None or np.all(origin_image == 0)):
+                self._log_error(Exception(f"步數 {step} 的圖像數據無效"))
+                return
+
+            # 檢查是否需要保存任何數據
+            if not (should_save_rewards or should_save_images):
+                return
+
             self.write_queue.put(data)
             
         except Exception as e:
             self._log_error(e)
             raise
 
+            
     def _write_data_to_hdf5(self, data: Dict[str, Any]) -> None:
         try:
+            should_save_rewards = data['should_save_rewards']
+            should_save_images = data['should_save_images']
             step = data['step']
             env_data = data['env_data']
             
-            # 保存reward相關數據
-            if data['should_save_rewards']:
-                self._ensure_space('reward')
-                idx = self.storage_counts['reward']
-                
-                self.env_datasets['angle_degrees'][idx] = env_data['angle_degrees']
-                self.env_datasets['reward'][idx] = env_data['reward']
-                self.env_datasets['reward_list'][idx] = env_data['reward_list']
-                self.env_datasets['reward_step_map'][idx] = step
-                
-                self.step_mappings['reward'][step] = idx
-                self.storage_counts['reward'] += 1
             
-            # 保存圖像相關數據
+            
+            # 使用同一個索引確保數據同步
+            idx = self.storage_counts['reward']
+
+            
+            # 確保兩個數據集都有足夠空間
+            self._ensure_space('reward')
+            self._ensure_space('image')
+
+            if self.storage_counts['reward'] != self.storage_counts['image']:
+                self._log_error(Exception(f"數據不同步: reward={self.storage_counts['reward']}, image={self.storage_counts['image']}"))
+                return
+            self.env_datasets['angle_degrees'][idx] = env_data['angle_degrees']
+            self.env_datasets['reward'][idx] = env_data['reward']
+            self.env_datasets['reward_list'][idx] = env_data['reward_list']
+            self.env_datasets['reward_step_map'][idx] = step
+            
+            self.step_mappings['reward'][step] = idx
+            self.storage_counts['reward'] += 1
+            
+            # 始終保存圖像相關數據以確保連續性
             if data['should_save_images'] and env_data['origin_image'] is not None:
+                # 檢查圖像質量
+                if np.all(env_data['origin_image'] == 0):
+                    self._log_error(Exception(f"步數 {step} 的圖像全黑"))
+                    return
+
+                # 保存圖像數據
                 self._ensure_space('image')
                 idx = self.storage_counts['image']
                 
@@ -346,6 +386,11 @@ class DataHandler:
                 
                 self.step_mappings['image'][step] = idx
                 self.storage_counts['image'] += 1
+            else:
+                # 確保圖像計數與獎勵計數同步
+                self.storage_counts['image'] += 1
+                # 不記錄日誌以減少輸出
+                return
             
             # 保存特徵數據
             if data['should_save_features'] and data['feature_data'] is not None:
@@ -407,6 +452,12 @@ class DataHandler:
                 self.stats['disk_usage'] = os.path.getsize(self.env_file.filename) / (1024 * 1024)
             except:
                 pass
+                
+            # 檢查數據連續性
+            if (self.storage_counts['image'] < self.storage_counts['reward'] or
+                abs(self.storage_counts['image'] - self.storage_counts['reward']) > 1):
+                self._log_error(Exception(
+                    f"數據不連續: 圖像={self.storage_counts['image']}, 獎勵={self.storage_counts['reward']}"))
         
         if self.logger:
             self.logger.update_data_handler_stats(self.stats)

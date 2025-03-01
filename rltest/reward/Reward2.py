@@ -263,7 +263,7 @@ class RewardFunction:
         max_deviation = max(x_deviation, z_deviation)
         if max_deviation > self.ROTATION_THRESHOLD:
             normalized_penalty = (max_deviation - self.ROTATION_THRESHOLD) / (180.0 - self.ROTATION_THRESHOLD)
-            return min(1.0, normalized_penalty)
+            return min(1.0, normalized_penalty)*-1.0
         return 0.0
 
     def calculate_touch_rewards(self, target_positions: List[Dict[str, float]], 

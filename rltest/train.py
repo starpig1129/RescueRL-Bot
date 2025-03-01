@@ -200,8 +200,8 @@ def main(model_dir="E:/train_log0118/models"):
             show=False,              # 是否顯示視覺化界面
             epoch=current_epoch,     # 當前訓練世代
             test_mode=False,         # 是否為測試模式
-            feature_save_interval=500,  # 模型特徵保存間隔
-            image_save_interval=100,     # 圖像資料保存間隔
+            feature_save_interval=1,  # 模型特徵保存間隔
+            image_save_interval=1,    # 圖像資料保存間隔
             reward_save_interval=1     # 獎勵資料保存間隔
         )
         
