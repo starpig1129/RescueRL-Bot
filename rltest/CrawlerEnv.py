@@ -171,6 +171,7 @@ class CrawlerEnv(gym.Env):
                 try:
                     self.data_handler.save_step_data(
                         self.step_count,
+                        self.epoch,
                         obs,
                         relative_angle,
                         reward,
