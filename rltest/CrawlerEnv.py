@@ -101,12 +101,25 @@ class CrawlerEnv(gym.Env):
         except Exception as e:
             self.close()
             raise Exception(f"設置伺服器時發生錯誤: {e}")
+            
+        # 檢查 Unity 客戶端是否已連接
+        connection_timeout = 10  # 10秒超時
+        start_time = time.time()
+        while not self.server_manager.is_unity_connected() and time.time() - start_time < connection_timeout:
+            time.sleep(0.5)
+        if not self.server_manager.is_unity_connected():
+            raise Exception("無法連接到 Unity 客戶端，請確保 Unity 已啟動並運行")
 
     def step(self, action):
         try:
             self.step_count += 1
             step_log = []
             
+            # 檢查 Unity 客戶端是否已連接
+            if not self.server_manager.is_unity_connected():
+                if self.logger:
+                    self.logger.log_error("Unity 客戶端未連接，無法執行步驟")
+                return None, 0, True, {}
             # 檢查是否需要記錄
             epoch_mod = self.epoch % 16
             self.should_log_steps = epoch_mod in [15, 0, 1]
@@ -367,6 +380,12 @@ class CrawlerEnv(gym.Env):
 
     def reset(self):
         try:
+            # 檢查 Unity 客戶端是否已連接
+            if not self.server_manager.is_unity_connected():
+                if self.logger:
+                    self.logger.log_error("Unity 客戶端未連接，無法重置環境")
+                return None
+                
             # 在世代結束時記錄結果
             if self.epoch > 0:
                 self._log_epoch_result()
@@ -467,6 +486,13 @@ if __name__ == "__main__":
         current_epoch = 1
         env = CrawlerEnv(show=True, epoch=current_epoch)
         
+        # 檢查 Unity 客戶端是否已連接
+        if not env.server_manager.is_unity_connected():
+            print("錯誤：Unity 客戶端未連接")
+            print("請確保 Unity 已啟動並運行，然後重新運行此腳本")
+            env.close()
+            sys.exit(1)
+            
         while True:
             obs = env.reset()
             env.done = False

@@ -2,7 +2,7 @@ import socket
 
 def tcp_client():
     host = '127.0.0.1'  # 本地主機
-    port = 9000  # 目標端口
+    port = 5000  # 目標端口
 
     # 創建 socket 物件
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

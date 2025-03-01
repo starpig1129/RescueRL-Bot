@@ -1,10 +1,11 @@
 using UnityEngine;
 using System;
-using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Threading;
 using System.IO;
+using System.Text;
+using System.Collections;
 
 public class CommunicationManager : MonoBehaviour
 {
@@ -39,19 +40,19 @@ public class CommunicationManager : MonoBehaviour
         }
     }
 
-    // 各種連接
-    private TcpClient controlClient; // 端口5000
-    private TcpClient infoClient;    // 端口8000
-    private TcpClient obsClient;     // 端口6000
-    private TcpClient resetClient;   // 端口7000
-    private TcpClient topCameraClient; // 端口9000
+    // 各種 ZeroMQ 套接字
+    private ZmqSocket controlSocket; // 端口5000
+    private ZmqSocket infoSocket;    // 端口8000
+    private ZmqSocket obsSocket;     // 端口6000
+    private ZmqSocket resetSocket;   // 端口7000
+    private ZmqSocket topCameraSocket; // 端口9000
 
-    // 對應的網絡流
-    private NetworkStream controlStream;
-    private NetworkStream infoStream;
-    private NetworkStream obsStream;
-    private NetworkStream resetStream;
-    private NetworkStream topCameraStream;
+    // 對應的套接字類型
+    private ZmqSocketType controlSocketType = ZmqSocketType.Request;   // REQ (Unity) -> REP (Python)
+    private ZmqSocketType infoSocketType = ZmqSocketType.Request;      // REQ (Unity) -> REP (Python)
+    private ZmqSocketType obsSocketType = ZmqSocketType.Request;       // REQ (Unity) -> REP (Python)
+    private ZmqSocketType resetSocketType = ZmqSocketType.Request;     // REQ (Unity) -> REP (Python)
+    private ZmqSocketType topCameraSocketType = ZmqSocketType.Request; // REQ (Unity) -> REP (Python)
 
     // 連接狀態
     private bool isControlConnected;
@@ -68,16 +69,16 @@ public class CommunicationManager : MonoBehaviour
     private readonly object topCameraLock = new object();
 
     // 連接參數
-    private const string Host = "localhost";
-    private const int ControlPort = 5000;
-    private const int InfoPort = 8000;
-    private const int ObsPort = 6000;
-    private const int ResetPort = 7000;
-    private const int TopCameraPort = 9000;
+    private const string Host = "127.0.0.1";
+    private const int ControlPort = 5001;
+    private const int InfoPort = 8001;
+    private const int ObsPort = 6001;
+    private const int ResetPort = 7001;
+    private const int TopCameraPort = 9001;
 
     // 重連參數
-    private const int MaxRetryAttempts = 5;
-    private const int RetryDelayMs = 1000;
+    private const int MaxRetryAttempts = 10;
+    private const int RetryDelayMs = 2000;
 
     // 公開屬性
     public bool IsControlConnected => isControlConnected;
@@ -86,11 +87,13 @@ public class CommunicationManager : MonoBehaviour
     public bool IsResetConnected => isResetConnected;
     public bool IsTopCameraConnected => isTopCameraConnected;
 
-    public NetworkStream ControlStream => controlStream;
-    public NetworkStream InfoStream => infoStream;
-    public NetworkStream ObsStream => obsStream;
-    public NetworkStream ResetStream => resetStream;
-    public NetworkStream TopCameraStream => topCameraStream;
+    // 為了保持與原有代碼的兼容性，我們提供相同的屬性名稱
+    // 但實際上返回的是 ZmqSocket 對象
+    public ZmqSocket ControlStream => controlSocket;
+    public ZmqSocket InfoStream => infoSocket;
+    public ZmqSocket ObsStream => obsSocket;
+    public ZmqSocket ResetStream => resetSocket;
+    public ZmqSocket TopCameraStream => topCameraSocket;
 
     public object ControlLock => controlLock;
     public object InfoLock => infoLock;
@@ -141,6 +144,9 @@ public class CommunicationManager : MonoBehaviour
     // 初始化
     private void Awake()
     {
+        // 確保 NetMQ 包裝器已初始化
+        NetMQWrapper.Instance.StartNetMQ();
+
         lock (instanceLock)
         {
             if (_instance == null)
@@ -170,6 +176,8 @@ public class CommunicationManager : MonoBehaviour
     // 連接監控相關
     private bool isMonitoringConnections = false;
     private float connectionCheckInterval = 5f; // 每5秒檢查一次
+    private float heartbeatInterval = 5f; // 每5秒發送一次心跳
+    private float connectionTestTimeout = 10f; // 連接測試超時時間（增加到10秒）
 
     private void Start()
     {
@@ -183,6 +191,9 @@ public class CommunicationManager : MonoBehaviour
             {
                 // 啟動連接監控
                 StartConnectionMonitoring();
+
+                // 啟動心跳發送
+                StartHeartbeat();
             }
         });
     }
@@ -197,6 +208,13 @@ public class CommunicationManager : MonoBehaviour
         }
     }
 
+    private void StartHeartbeat()
+    {
+        // 啟動心跳發送協程
+        StartCoroutine(SendHeartbeats());
+        Debug.Log("已啟動心跳發送");
+    }
+
     private System.Collections.IEnumerator MonitorConnections()
     {
         while (isMonitoringConnections)
@@ -206,11 +224,11 @@ public class CommunicationManager : MonoBehaviour
             // 檢查所有連接
             bool needReconnect = false;
 
-            if (!isControlConnected || controlStream == null) needReconnect = true;
-            if (!isInfoConnected || infoStream == null) needReconnect = true;
-            if (!isObsConnected || obsStream == null) needReconnect = true;
-            if (!isResetConnected || resetStream == null) needReconnect = true;
-            if (!isTopCameraConnected || topCameraStream == null) needReconnect = true;
+            if (!isControlConnected || controlSocket == null) needReconnect = true;
+            if (!isInfoConnected || infoSocket == null) needReconnect = true;
+            if (!isObsConnected || obsSocket == null) needReconnect = true;
+            if (!isResetConnected || resetSocket == null) needReconnect = true;
+            if (!isTopCameraConnected || topCameraSocket == null) needReconnect = true;
 
             if (needReconnect)
             {
@@ -229,21 +247,132 @@ public class CommunicationManager : MonoBehaviour
         }
     }
 
-    // 連接信息類
+    private System.Collections.IEnumerator SendHeartbeats()
+    {
+        while (true)
+        {
+            // 等待指定的心跳間隔
+            yield return new WaitForSeconds(heartbeatInterval);
+
+            // 發送信息通道心跳
+            SendInfoHeartbeat();
+
+            // 發送觀察通道心跳
+            SendObsHeartbeat();
+
+            // 發送頂部相機通道心跳
+            SendTopCameraHeartbeat();
+
+            // 控制通道和重置通道的心跳在實際發送數據時處理
+        }
+    }
+
+    private async void SendInfoHeartbeat()
+    {
+        if (!isInfoConnected || infoSocket == null || infoSocketType != ZmqSocketType.Request) return;
+
+        try
+        {
+            // 創建心跳數據
+            long timestamp = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+            string heartbeatJson = "{\"heartbeat\":true,\"timestamp\":" + timestamp + "}";
+            byte[] heartbeatData = Encoding.UTF8.GetBytes(heartbeatJson);
+
+            // 發送心跳
+            await SendDataAsync(heartbeatData, infoSocket, infoLock, isInfoConnected);
+
+            // 接收回應 (REQ/REP模式需要)
+            byte[] response = await ReceiveDataAsync(infoSocket, infoLock, isInfoConnected);
+            if (response == null)
+            {
+                Debug.LogWarning("未收到信息心跳回應");
+                isInfoConnected = false;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"發送信息心跳失敗: {e.Message}");
+        }
+    }
+
+    private async void SendObsHeartbeat()
+    {
+        if (!isObsConnected || obsSocket == null || obsSocketType != ZmqSocketType.Request) return;
+
+        try
+        {
+            // 創建一個1x1的空白圖像作為心跳
+            Texture2D heartbeatTexture = new Texture2D(2, 2);
+            heartbeatTexture.SetPixel(0, 0, Color.black);
+            heartbeatTexture.Apply();
+
+            // 發送心跳圖像
+            await SendImageAsync(heartbeatTexture, obsSocket, obsLock, isObsConnected);
+
+            // 接收回應 (REQ/REP模式需要)
+            byte[] response = await ReceiveDataAsync(obsSocket, obsLock, isObsConnected);
+            if (response == null)
+            {
+                Debug.LogWarning("未收到觀察心跳回應");
+                isObsConnected = false;
+            }
+
+            // 銷毀臨時創建的紋理
+            Destroy(heartbeatTexture);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"發送觀察心跳失敗: {e.Message}");
+        }
+    }
+
+    private async void SendTopCameraHeartbeat()
+    {
+        if (!isTopCameraConnected || topCameraSocket == null || topCameraSocketType != ZmqSocketType.Request) return;
+
+        try
+        {
+            // 創建一個1x1的空白圖像作為心跳
+            Texture2D heartbeatTexture = new Texture2D(2, 2);
+            heartbeatTexture.SetPixel(0, 0, Color.black);
+            heartbeatTexture.Apply();
+
+            // 發送心跳圖像
+            await SendImageAsync(heartbeatTexture, topCameraSocket, topCameraLock, isTopCameraConnected);
+
+            // 接收回應 (REQ/REP模式需要)
+            byte[] response = await ReceiveDataAsync(topCameraSocket, topCameraLock, isTopCameraConnected);
+            if (response == null)
+            {
+                Debug.LogWarning("未收到頂部相機心跳回應");
+                isTopCameraConnected = false;
+            }
+
+            // 銷毀臨時創建的紋理
+            Destroy(heartbeatTexture);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"發送頂部相機心跳失敗: {e.Message}");
+        }
+    }
+
+    // ZeroMQ 連接信息類
     private class ConnectionInfo
     {
-        public TcpClient Client;
-        public NetworkStream Stream;
+        public ZmqSocket Socket;
         public bool IsConnected;
         public string Host;
         public int Port;
         public object LockObj;
+        public ZmqSocketType SocketType;
 
-        public ConnectionInfo(string host, int port, object lockObj)
+        public ConnectionInfo(string host, int port, object lockObj, ZmqSocketType socketType)
         {
             Host = host;
             Port = port;
             LockObj = lockObj;
+            SocketType = socketType;
             IsConnected = false;
         }
     }
@@ -252,11 +381,11 @@ public class CommunicationManager : MonoBehaviour
     public async Task InitializeAllConnections()
     {
         // 創建連接信息
-        var controlInfo = new ConnectionInfo(Host, ControlPort, controlLock);
-        var infoInfo = new ConnectionInfo(Host, InfoPort, infoLock);
-        var obsInfo = new ConnectionInfo(Host, ObsPort, obsLock);
-        var resetInfo = new ConnectionInfo(Host, ResetPort, resetLock);
-        var topCameraInfo = new ConnectionInfo(Host, TopCameraPort, topCameraLock);
+        var controlInfo = new ConnectionInfo(Host, ControlPort, controlLock, controlSocketType);
+        var infoInfo = new ConnectionInfo(Host, InfoPort, infoLock, infoSocketType);
+        var obsInfo = new ConnectionInfo(Host, ObsPort, obsLock, obsSocketType);
+        var resetInfo = new ConnectionInfo(Host, ResetPort, resetLock, resetSocketType);
+        var topCameraInfo = new ConnectionInfo(Host, TopCameraPort, topCameraLock, topCameraSocketType);
 
         // 啟動連接任務
         List<Task> connectionTasks = new List<Task>
@@ -271,11 +400,11 @@ public class CommunicationManager : MonoBehaviour
         await Task.WhenAll(connectionTasks);
 
         // 更新連接狀態
-        lock (controlLock) { controlClient = controlInfo.Client; controlStream = controlInfo.Stream; isControlConnected = controlInfo.IsConnected; }
-        lock (infoLock) { infoClient = infoInfo.Client; infoStream = infoInfo.Stream; isInfoConnected = infoInfo.IsConnected; }
-        lock (obsLock) { obsClient = obsInfo.Client; obsStream = obsInfo.Stream; isObsConnected = obsInfo.IsConnected; }
-        lock (resetLock) { resetClient = resetInfo.Client; resetStream = resetInfo.Stream; isResetConnected = resetInfo.IsConnected; }
-        lock (topCameraLock) { topCameraClient = topCameraInfo.Client; topCameraStream = topCameraInfo.Stream; isTopCameraConnected = topCameraInfo.IsConnected; }
+        lock (controlLock) { controlSocket = controlInfo.Socket; isControlConnected = controlInfo.IsConnected; }
+        lock (infoLock) { infoSocket = infoInfo.Socket; isInfoConnected = infoInfo.IsConnected; }
+        lock (obsLock) { obsSocket = obsInfo.Socket; isObsConnected = obsInfo.IsConnected; }
+        lock (resetLock) { resetSocket = resetInfo.Socket; isResetConnected = resetInfo.IsConnected; }
+        lock (topCameraLock) { topCameraSocket = topCameraInfo.Socket; isTopCameraConnected = topCameraInfo.IsConnected; }
 
         Debug.Log("所有連接初始化完成");
     }
@@ -294,24 +423,64 @@ public class CommunicationManager : MonoBehaviour
 
                 lock (info.LockObj)
                 {
-                    if (info.Client != null)
+                    if (info.Socket != null)
                     {
-                        try { info.Client.Close(); } catch { }
-                        info.Client = null;
+                        try { info.Socket.Close(); } catch { }
+                        info.Socket = null;
                     }
 
-                    info.Client = new TcpClient();
-                    info.Client.NoDelay = true;
-                    info.Client.SendBufferSize = 1024 * 256;
-                    info.Client.ReceiveBufferSize = 1024 * 256;
-                }
+                    // 創建新的 ZeroMQ 套接字
+                    info.Socket = new ZmqSocket(info.SocketType);
 
-                await info.Client.ConnectAsync(info.Host, info.Port);
+                    // 根據套接字類型選擇連接方式
+                    string endpoint = $"tcp://{info.Host}:{info.Port}";
 
-                lock (info.LockObj)
-                {
-                    info.Stream = info.Client.GetStream();
-                    info.IsConnected = true;
+                    info.Socket.Connect(endpoint);
+
+                    // 測試連接是否真的成功
+                    if (info.SocketType == ZmqSocketType.Request)
+                    {
+                        // 對於 Publisher 套接字，嘗試發送一個測試消息
+                        try
+                        {
+                            byte[] testData = Encoding.UTF8.GetBytes("{\"test\":true}");
+                            bool sendResult = info.Socket.SendAsync(testData).Wait(TimeSpan.FromSeconds(connectionTestTimeout));
+                            info.IsConnected = sendResult;
+
+                            if (sendResult)
+                            {
+                                // 對於 Request 套接字，需要接收回應
+                                try
+                                {
+                                    byte[] response = info.Socket.ReceiveAsync().Result;
+                                    info.IsConnected = (response != null);
+                                }
+                                catch {
+                                    info.IsConnected = false;
+                                }
+                            }
+                            if (!sendResult)
+                            {
+                                Debug.LogWarning($"發送測試消息超時，連接可能失敗: {endpoint}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"發送測試消息失敗: {ex.Message}");
+                            info.IsConnected = false;
+                        }
+                    }
+                    else if (info.SocketType == ZmqSocketType.Request && info.Socket != null)
+                    {
+                        // 對於 Request 套接字，我們在實際使用時才能確定連接是否成功
+                        // 暫時假設連接成功，但在第一次使用時會重新檢查
+                        info.IsConnected = true;
+                    }
+                    else
+                    {
+                        // 對於其他套接字類型，暫時假設連接成功
+                        info.IsConnected = true;
+                    }
                     connected = true;
                 }
 
@@ -335,9 +504,9 @@ public class CommunicationManager : MonoBehaviour
     }
 
     // 發送方法 (帶重試邏輯)
-    public async Task<bool> SendDataAsync(byte[] data, NetworkStream targetStream, object lockObj, bool isConnected)
+    public async Task<bool> SendDataAsync(byte[] data, ZmqSocket targetSocket, object lockObj, bool isConnected)
     {
-        if (!isConnected || targetStream == null) return false;
+        if (!isConnected || targetSocket == null) return false;
 
         int attempts = 0;
         bool success = false;
@@ -348,17 +517,31 @@ public class CommunicationManager : MonoBehaviour
             {
                 lock (lockObj)
                 {
-                    if (!isConnected || targetStream == null) return false;
+                    if (!isConnected || targetSocket == null) return false;
 
-                    // 發送數據長度
-                    byte[] lengthBytes = BitConverter.GetBytes(data.Length);
-                    targetStream.Write(lengthBytes, 0, 4);
+                    // 使用 ZeroMQ 發送數據
+                    success = targetSocket.SendAsync(data).Result;
 
-                    // 發送數據
-                    targetStream.Write(data, 0, data.Length);
-                    targetStream.Flush();
-
-                    success = true;
+                    // 對於 Request 套接字，需要接收回應
+                    if (success && (
+                        (targetSocket == infoSocket && infoSocketType == ZmqSocketType.Request) ||
+                        (targetSocket == obsSocket && obsSocketType == ZmqSocketType.Request) ||
+                        (targetSocket == topCameraSocket && topCameraSocketType == ZmqSocketType.Request) ||
+                        (targetSocket == controlSocket && controlSocketType == ZmqSocketType.Request)))
+                    {
+                        try
+                        {
+                            byte[] response = targetSocket.ReceiveAsync().Result;
+                            success = (response != null);
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning($"接收回應失敗: {e.Message}");
+                            success = false;
+                        }
+                    }
+                    if (success)
+                        Debug.Log($"成功發送 {data.Length} 字節的數據");
                 }
             }
             catch (Exception e)
@@ -377,9 +560,9 @@ public class CommunicationManager : MonoBehaviour
     }
 
     // 接收方法 (帶重試邏輯)
-    public async Task<byte[]> ReceiveDataAsync(NetworkStream targetStream, object lockObj, bool isConnected)
+    public async Task<byte[]> ReceiveDataAsync(ZmqSocket targetSocket, object lockObj, bool isConnected)
     {
-        if (!isConnected || targetStream == null) return null;
+        if (!isConnected || targetSocket == null) return null;
 
         int attempts = 0;
         byte[] result = null;
@@ -390,31 +573,10 @@ public class CommunicationManager : MonoBehaviour
             {
                 lock (lockObj)
                 {
-                    if (!isConnected || targetStream == null) return null;
+                    if (!isConnected || targetSocket == null) return null;
 
-                    // 接收數據長度
-                    byte[] lengthBytes = new byte[4];
-                    int bytesRead = targetStream.Read(lengthBytes, 0, 4);
-
-                    if (bytesRead != 4) throw new Exception("無法讀取數據長度");
-
-                    int length = BitConverter.ToInt32(lengthBytes, 0);
-
-                    // 接收數據
-                    byte[] data = new byte[length];
-                    int totalBytesRead = 0;
-
-                    while (totalBytesRead < length)
-                    {
-                        int bytesRemaining = length - totalBytesRead;
-                        int bytesReadThisTime = targetStream.Read(data, totalBytesRead, bytesRemaining);
-
-                        if (bytesReadThisTime == 0) throw new Exception("連接已關閉");
-
-                        totalBytesRead += bytesReadThisTime;
-                    }
-
-                    result = data;
+                    // 使用 ZeroMQ 接收數據
+                    result = targetSocket.ReceiveAsync().Result;
                 }
             }
             catch (Exception e)
@@ -433,18 +595,18 @@ public class CommunicationManager : MonoBehaviour
     }
 
     // 發送圖像數據
-    public async Task<bool> SendImageAsync(Texture2D texture, NetworkStream targetStream, object lockObj, bool isConnected)
+    public async Task<bool> SendImageAsync(Texture2D texture, ZmqSocket targetSocket, object lockObj, bool isConnected)
     {
-        if (!isConnected || targetStream == null || texture == null) return false;
+        if (!isConnected || targetSocket == null || texture == null) return false;
 
-        byte[] imageBytes = texture.EncodeToJPG();
-        return await SendDataAsync(imageBytes, targetStream, lockObj, isConnected);
+        byte[] imageBytes = texture.EncodeToPNG();
+        return await SendDataAsync(imageBytes, targetSocket, lockObj, isConnected);
     }
 
     // 發送重置信號
     public async Task<int> SendResetSignalAsync()
     {
-        Debug.Log("開始發送重置信號...");
+        Debug.Log("開始發送重置信號，檢查 Python 伺服器是否運行...");
 
         // 檢查連接狀態
         if (!isResetConnected)
@@ -453,7 +615,7 @@ public class CommunicationManager : MonoBehaviour
             await InitializeAllConnections();
 
             // 再次檢查連接狀態
-            if (!isResetConnected || resetStream == null)
+            if (!isResetConnected || resetSocket == null)
             {
                 Debug.LogError("無法建立重置連接");
                 return -1;
@@ -469,39 +631,47 @@ public class CommunicationManager : MonoBehaviour
         {
             try
             {
+                byte[] epochBytes = null;
                 lock (resetLock)
                 {
-                    // 再次檢查連接狀態和流狀態
-                    if (!isResetConnected || resetStream == null)
+                    // 再次檢查連接狀態
+                    if (!isResetConnected || resetSocket == null)
                     {
                         Debug.LogWarning("重置連接已斷開，嘗試重新連接...");
-                        break; // 跳出鎖定區域，嘗試重新連接
-                    }
-
-                    // 檢查流是否可寫入和讀取
-                    if (!resetStream.CanWrite || !resetStream.CanRead)
-                    {
-                        Debug.LogWarning("重置流無法讀寫，嘗試重新連接...");
                         break; // 跳出鎖定區域，嘗試重新連接
                     }
 
                     Debug.Log("發送重置信號...");
 
                     // 發送重置信號
+                    Debug.Log($"發送重置信號: 1 字節");
                     byte[] resetSignal = BitConverter.GetBytes(1);
-                    resetStream.Write(resetSignal, 0, 4);
-                    resetStream.Flush(); // 確保數據立即發送
+
+                    // 使用超時來檢測 Python 伺服器是否真的在運行
+                    var sendTask = resetSocket.SendAsync(resetSignal);
+                    bool sendResult = sendTask.Wait(TimeSpan.FromSeconds(connectionTestTimeout));
+
+                    if (!sendResult)
+                    {
+                        Debug.LogError("發送重置信號超時，Python 伺服器可能未運行");
+                        isResetConnected = false;
+                        break;
+                    }
 
                     Debug.Log("等待接收epoch...");
 
-                    // 設置讀取超時
-                    resetStream.ReadTimeout = 5000; // 5秒超時
+                    // 在鎖內獲取套接字引用
+                    var socket = resetSocket;
+                }
 
+                // 在鎖外執行異步操作
+                if (resetSocket != null)
+                {
                     // 接收 epoch
-                    byte[] epochBytes = new byte[4];
-                    int bytesRead = resetStream.Read(epochBytes, 0, 4);
+                    Debug.Log("等待接收epoch數據...");
+                    epochBytes = await Task.Run(() => resetSocket.ReceiveAsync().Result);
 
-                    if (bytesRead == 4)
+                    if (epochBytes != null && epochBytes.Length == 4)
                     {
                         epoch = BitConverter.ToInt32(epochBytes, 0);
                         success = true;
@@ -509,7 +679,8 @@ public class CommunicationManager : MonoBehaviour
                     }
                     else
                     {
-                        Debug.LogWarning($"接收到的字節數不足: {bytesRead}/4");
+                        Debug.LogError($"接收到的epoch數據無效: {(epochBytes != null ? epochBytes.Length : 0)} 字節");
+                        Debug.LogWarning($"接收到的字節數不足: {(epochBytes != null ? epochBytes.Length : 0)}/4");
                     }
                 }
 
@@ -519,20 +690,9 @@ public class CommunicationManager : MonoBehaviour
                     return epoch;
                 }
             }
-            catch (ObjectDisposedException ode)
-            {
-                Debug.LogError($"重置流已被釋放: {ode.Message}");
-                // 嘗試重新建立連接
-                CloseResetConnection();
-            }
-            catch (IOException ioe)
-            {
-                Debug.LogWarning($"IO異常: {ioe.Message}");
-                // 可能是連接已斷開，嘗試重新建立連接
-                CloseResetConnection();
-            }
             catch (Exception e)
             {
+                Debug.LogError($"發送重置信號時發生異常: {e.GetType().Name} - {e.Message}");
                 Debug.LogWarning($"發送重置信號失敗 (嘗試 {attempts+1}/{maxRetries}): {e.Message}");
                 // 其他異常，可能需要重新建立連接
                 CloseResetConnection();
@@ -551,19 +711,18 @@ public class CommunicationManager : MonoBehaviour
                     Debug.Log($"嘗試重新建立重置連接 (嘗試 {attempts+1}/{maxRetries})...");
 
                     // 使用ConnectionInfo重新連接
-                    var resetInfo = new ConnectionInfo(Host, ResetPort, resetLock);
+                    var resetInfo = new ConnectionInfo(Host, ResetPort, resetLock, resetSocketType);
                     await ConnectAsync(resetInfo);
 
                     // 更新連接狀態
                     lock (resetLock)
                     {
-                        resetClient = resetInfo.Client;
-                        resetStream = resetInfo.Stream;
+                        resetSocket = resetInfo.Socket;
                         isResetConnected = resetInfo.IsConnected;
                     }
 
                     // 如果重新連接失敗，則繼續下一次嘗試
-                    if (!isResetConnected || resetStream == null)
+                    if (!isResetConnected || resetSocket == null)
                     {
                         Debug.LogWarning($"重新建立重置連接失敗 (嘗試 {attempts+1}/{maxRetries})");
                     }
@@ -587,15 +746,56 @@ public class CommunicationManager : MonoBehaviour
         return epoch;
     }
 
-
-
     // 發送控制信號
     public async Task<bool> SendControlSignalAsync(float relativeAngle)
     {
-        if (!isControlConnected || controlStream == null) return false;
+        if (!isControlConnected || controlSocket == null) return false;
 
-        byte[] buffer = BitConverter.GetBytes(relativeAngle);
-        return await SendDataAsync(buffer, controlStream, controlLock, isControlConnected);
+        try
+        {
+            byte[] buffer = BitConverter.GetBytes(relativeAngle);
+
+            Debug.Log($"準備發送控制信號: {relativeAngle}");
+                bool success = false;
+
+                if (controlSocketType == ZmqSocketType.Request)
+                {
+                    // 對於 Request 套接字，發送後需要接收回應
+                    var sendTask = SendDataAsync(buffer, controlSocket, controlLock, isControlConnected);
+                    bool sendResult = sendTask.Wait(TimeSpan.FromSeconds(connectionTestTimeout));
+                    Debug.Log($"控制信號發送結果: {sendResult}");
+
+                    if (!sendResult)
+                    {
+                        Debug.LogError("發送控制信號超時，Python 伺服器可能未運行");
+                        return false;
+                    }
+
+                    success = await sendTask;
+                    Debug.Log($"控制信號發送完成: {success}");
+                }
+                else
+                {
+                // 使用超時來檢測 Python 伺服器是否真的在運行
+                var sendTask = SendDataAsync(buffer, controlSocket, controlLock, isControlConnected);
+                bool sendResult = sendTask.Wait(TimeSpan.FromSeconds(connectionTestTimeout));
+
+                if (!sendResult)
+                {
+                    Debug.LogError("發送控制信號超時，Python 伺服器可能未運行");
+                    return false;
+                }
+
+                success = await sendTask;
+                }
+
+                return success;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"發送控制信號時發生錯誤: {e.Message}");
+            return false;
+        }
     }
 
     // 關閉所有連接
@@ -613,16 +813,10 @@ public class CommunicationManager : MonoBehaviour
     {
         lock (controlLock)
         {
-            if (controlStream != null)
+            if (controlSocket != null)
             {
-                try { controlStream.Close(); } catch (Exception e) { Debug.LogError($"關閉控制流時發生錯誤: {e.Message}"); }
-                controlStream = null;
-            }
-
-            if (controlClient != null)
-            {
-                try { controlClient.Close(); } catch (Exception e) { Debug.LogError($"關閉控制客戶端時發生錯誤: {e.Message}"); }
-                controlClient = null;
+                try { controlSocket.Close(); } catch (Exception e) { Debug.LogError($"關閉控制套接字時發生錯誤: {e.Message}"); }
+                controlSocket = null;
             }
 
             isControlConnected = false;
@@ -634,16 +828,10 @@ public class CommunicationManager : MonoBehaviour
     {
         lock (infoLock)
         {
-            if (infoStream != null)
+            if (infoSocket != null)
             {
-                try { infoStream.Close(); } catch (Exception e) { Debug.LogError($"關閉信息流時發生錯誤: {e.Message}"); }
-                infoStream = null;
-            }
-
-            if (infoClient != null)
-            {
-                try { infoClient.Close(); } catch (Exception e) { Debug.LogError($"關閉信息客戶端時發生錯誤: {e.Message}"); }
-                infoClient = null;
+                try { infoSocket.Close(); } catch (Exception e) { Debug.LogError($"關閉信息套接字時發生錯誤: {e.Message}"); }
+                infoSocket = null;
             }
 
             isInfoConnected = false;
@@ -655,16 +843,10 @@ public class CommunicationManager : MonoBehaviour
     {
         lock (obsLock)
         {
-            if (obsStream != null)
+            if (obsSocket != null)
             {
-                try { obsStream.Close(); } catch (Exception e) { Debug.LogError($"關閉觀察流時發生錯誤: {e.Message}"); }
-                obsStream = null;
-            }
-
-            if (obsClient != null)
-            {
-                try { obsClient.Close(); } catch (Exception e) { Debug.LogError($"關閉觀察客戶端時發生錯誤: {e.Message}"); }
-                obsClient = null;
+                try { obsSocket.Close(); } catch (Exception e) { Debug.LogError($"關閉觀察套接字時發生錯誤: {e.Message}"); }
+                obsSocket = null;
             }
 
             isObsConnected = false;
@@ -676,16 +858,10 @@ public class CommunicationManager : MonoBehaviour
     {
         lock (resetLock)
         {
-            if (resetStream != null)
+            if (resetSocket != null)
             {
-                try { resetStream.Close(); } catch (Exception e) { Debug.LogError($"關閉重置流時發生錯誤: {e.Message}"); }
-                resetStream = null;
-            }
-
-            if (resetClient != null)
-            {
-                try { resetClient.Close(); } catch (Exception e) { Debug.LogError($"關閉重置客戶端時發生錯誤: {e.Message}"); }
-                resetClient = null;
+                try { resetSocket.Close(); } catch (Exception e) { Debug.LogError($"關閉重置套接字時發生錯誤: {e.Message}"); }
+                resetSocket = null;
             }
 
             isResetConnected = false;
@@ -697,16 +873,10 @@ public class CommunicationManager : MonoBehaviour
     {
         lock (topCameraLock)
         {
-            if (topCameraStream != null)
+            if (topCameraSocket != null)
             {
-                try { topCameraStream.Close(); } catch (Exception e) { Debug.LogError($"關閉頂部相機流時發生錯誤: {e.Message}"); }
-                topCameraStream = null;
-            }
-
-            if (topCameraClient != null)
-            {
-                try { topCameraClient.Close(); } catch (Exception e) { Debug.LogError($"關閉頂部相機客戶端時發生錯誤: {e.Message}"); }
-                topCameraClient = null;
+                try { topCameraSocket.Close(); } catch (Exception e) { Debug.LogError($"關閉頂部相機套接字時發生錯誤: {e.Message}"); }
+                topCameraSocket = null;
             }
 
             isTopCameraConnected = false;
@@ -716,6 +886,36 @@ public class CommunicationManager : MonoBehaviour
     // 應用退出時關閉所有連接
     private void OnApplicationQuit()
     {
+        // 關閉 NetMQ
+        NetMQWrapper.Instance.StopNetMQ();
+
         CloseAllConnections();
+    }
+
+    // 檢查 Python 伺服器是否真的在運行
+    public bool IsPythonServerRunning()
+    {
+        // 嘗試發送重置信號，如果成功則表示 Python 伺服器在運行
+        try
+        {
+            // 直接嘗試發送一個測試消息到重置套接字
+            if (resetSocket != null && isResetConnected)
+            {
+                lock (resetLock)
+                {
+                    byte[] testData = BitConverter.GetBytes(1);
+                    var sendTask = resetSocket.SendAsync(testData);
+                    bool sendResult = sendTask.Wait(TimeSpan.FromSeconds(connectionTestTimeout));
+
+                    return sendResult;
+                }
+            }
+            return false;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"檢查 Python 伺服器運行狀態時發生錯誤: {e.Message}");
+            return false;
+        }
     }
 }
