@@ -78,6 +78,13 @@ class DataReader:
         
         return nearest_idx
     
+    def _check_data_continuity(self, step_map: np.ndarray, target_steps: List[int], max_gap: int = 1) -> bool:
+        """檢查數據是否連續"""
+        for step in target_steps:
+            if self._find_nearest_index(step, step_map, max_gap) is None:
+                return False
+        return True
+    
     def load_range_data(self, epoch, slice_obj):
         """使用NumPy樣式的切片方式讀取指定世代和步數範圍的資料"""
         env_file_path = os.path.join(self.env_dir, f"ep{epoch:03d}_env.h5")
@@ -104,16 +111,35 @@ class DataReader:
                 # 讀取step映射表和設置各數據類型的最大允許距離
                 reward_steps = env_file['reward_step_map'][:]
                 image_steps = env_file['image_step_map'][:]
+
                 
-                reward_max_distance = 1   # reward要求精確對應
-                image_max_distance = 5    # 圖像可以接受5步以內的差距
-                feature_max_distance = 10  # 特徵可以接受10步以內的差距
+# 檢查數據連續性
+                steps_list = list(step_range)
+                if not self._check_data_continuity(reward_steps, steps_list, max_gap=1):
+                    print(f"獎勵數據在步數範圍 {start}-{stop} 中不連續")
+                    return None
+                
+                if not self._check_data_continuity(image_steps, steps_list, max_gap=1):
+                    print(f"圖像數據在步數範圍 {start}-{stop} 中不連續")
+                    return None
+
+                # 找到最小公共範圍
+                valid_steps = sorted(list(set(reward_steps).intersection(set(image_steps))))
+                if not valid_steps:
+                    print("沒有找到獎勵和圖像數據重疊的範圍")
+                    return None
+                
+                # 使用更嚴格的距離限制
+                reward_max_distance = 1  # reward要求精確對應
+                image_max_distance = 1   # 圖像也要求精確對應
+                feature_max_distance = 1  # 特徵也要求精確對應
                 
                 # 初始化數據數組
                 aligned_data['reward'] = np.zeros(len(step_range), dtype=np.float32)
                 aligned_data['reward_list'] = np.zeros((len(step_range), 12), dtype=np.float32)
                 aligned_data['angle_degrees'] = np.zeros(len(step_range), dtype=np.float32)
                 aligned_data['origin_image'] = np.zeros((len(step_range), 384, 640, 3), dtype=np.uint8)
+                aligned_data['top_view'] = np.zeros((len(step_range), 256, 256, 3), dtype=np.uint8)
                 aligned_data['yolo_boxes'] = np.zeros((len(step_range), 10, 4), dtype=np.float32)
                 aligned_data['yolo_scores'] = np.zeros((len(step_range), 10), dtype=np.float32)
                 aligned_data['yolo_classes'] = np.zeros((len(step_range), 10), dtype=np.int32)
@@ -122,18 +148,23 @@ class DataReader:
                 for i, step in enumerate(step_range):
                     # 找到最近的reward數據（要求精確匹配）
                     reward_idx = self._find_nearest_index(step, reward_steps, reward_max_distance)
-                    if reward_idx is not None:
+                    image_idx = self._find_nearest_index(step, image_steps, image_max_distance)
+                    
+                    # 只有當兩種數據都有效時才保存
+                    if reward_idx is not None and image_idx is not None:
                         aligned_data['reward'][i] = env_file['reward'][reward_idx]
                         aligned_data['reward_list'][i] = env_file['reward_list'][reward_idx]
                         aligned_data['angle_degrees'][i] = env_file['angle_degrees'][reward_idx]
-                    
-                    # 找到最近的圖像數據（允許一定範圍內的差距）
-                    image_idx = self._find_nearest_index(step, image_steps, image_max_distance)
-                    if image_idx is not None:
                         aligned_data['origin_image'][i] = env_file['origin_image'][image_idx]
+                        # 讀取頂視圖數據（如果存在）
+                        if 'top_view' in env_file:
+                            aligned_data['top_view'][i] = env_file['top_view'][image_idx]
+                        
                         aligned_data['yolo_boxes'][i] = env_file['yolo_boxes'][image_idx]
                         aligned_data['yolo_scores'][i] = env_file['yolo_scores'][image_idx]
                         aligned_data['yolo_classes'][i] = env_file['yolo_classes'][image_idx]
+                    else:
+                        print(f"在步數 {step} 找不到完整數據")
                 
                 # 合成obs數據
                 aligned_data['obs'] = np.array([
@@ -150,7 +181,20 @@ class DataReader:
             if os.path.exists(feature_file_path):
                 with h5py.File(feature_file_path, 'r') as feature_file:
                     feature_steps = feature_file['feature_step_map'][:]
+
                     
+# 檢查特徵數據連續性
+                    if not self._check_data_continuity(feature_steps, steps_list, max_gap=1):
+                        print(f"特徵數據在步數範圍 {start}-{stop} 中不連續")
+                    
+                    # 找到所有數據都存在的步數
+                    valid_steps = set(valid_steps).intersection(set(feature_steps))
+                    if not valid_steps:
+                        print("沒有找到所有數據類型重疊的範圍")
+                        return None
+                    
+                    print(f"找到 {len(valid_steps)} 個有效步數")
+
                     # 初始化特徵數據數組
                     feature_datasets = [
                         'layer_input', 'layer_conv1', 'layer_final_residual',
@@ -167,6 +211,27 @@ class DataReader:
                                 feature_idx = self._find_nearest_index(step, feature_steps, feature_max_distance)
                                 if feature_idx is not None:
                                     aligned_data[dataset][i] = feature_file[dataset][feature_idx]
+                                else:
+                                    print(f"在步數 {step} 找不到特徵數據")
+            
+            # 移除任何全零幀
+            valid_mask = np.any(aligned_data['origin_image'] != 0, axis=(1, 2, 3))
+            valid_count = np.sum(valid_mask)
+            print(f"找到 {valid_count} 個有效幀")
+            
+            if valid_count == 0:
+                print("沒有找到有效的影像幀")
+                return None
+
+            # 只保留有效幀的數據
+            for key in aligned_data:
+                if isinstance(aligned_data[key], np.ndarray):
+                    aligned_data[key] = aligned_data[key][valid_mask]
+
+            print(f"處理後數據形狀:")
+            for key, value in aligned_data.items():
+                if isinstance(value, np.ndarray):
+                    print(f"{key}: shape={value.shape}, dtype={value.dtype}")
             
             return aligned_data
                 
