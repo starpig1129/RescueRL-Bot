@@ -32,7 +32,7 @@ class EnhancedReplayViewer:
         # 設置視窗大小和位置
         cv2.resizeWindow('Original Image', 640, 384)
         cv2.resizeWindow('Observation', 640, 384)
-        cv2.resizeWindow('Top View', 256, 256)
+        cv2.resizeWindow('Top View', 512, 512)  # 增加Top View的顯示大小
         cv2.resizeWindow('Rewards', 400, 400)
         cv2.resizeWindow('Input Features', 320, 320)
         cv2.resizeWindow('Conv1 Features', 320, 320)
@@ -525,8 +525,14 @@ class EnhancedReplayViewer:
                 # 顯示頂視圖
                 cv2.imshow('Observation', obs_display)
                 if 'top_view' in data and data['top_view'][current_idx] is not None:
-                    cv2.imshow('Top View', data['top_view'][current_idx])
+                    top_view = data['top_view'][current_idx]
 
+                    # 使用線性插值方法將Top View放大到512x512
+                    resized_top_view = cv2.resize(
+                        top_view, 
+                        (512, 512), 
+                        interpolation=cv2.INTER_LINEAR)
+                    cv2.imshow('Top View', resized_top_view)
                 
                 # 顯示獎勵視窗
                 cv2.imshow('Rewards', reward_display)
